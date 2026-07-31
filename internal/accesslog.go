@@ -17,7 +17,7 @@ func OpenAccessLog(path string) (*os.File, io.Writer, error) {
 	if path == "" {
 		return nil, os.Stdout, nil
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 -- path comes from ACCESS_LOG env var, admin-controlled
 	if err != nil {
 		return nil, nil, fmt.Errorf("open access log %s: %w", path, err)
 	}
