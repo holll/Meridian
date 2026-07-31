@@ -50,8 +50,8 @@ async function loadSites() {
           </div>
           ${playbackRow}
           <div class="site-row">
-            <span class="site-row-label">监听端口</span>
-            <span class="mono">:${s.listen_port}</span>
+            <span class="site-row-label">完整访问路径</span>
+            <span class="mono">${esc((window.ROUTE_PREFIX || '') + s.path_prefix)}</span>
           </div>
           <div class="site-row">
             <span class="site-row-label">UA 模式</span>
@@ -202,16 +202,18 @@ function showSiteModal(site) {
       <div class="form-help">直连分流：播放请求直接发送到首个播放回源（适合完整 Emby 实例）。重定向跟随：所有请求经主回源，自动跟随重定向到任一播放回源（适合多节点 CDN）。</div>
     </div>
     <div class="form-group">
-      <label>监听端口</label>
-      <input type="number" class="form-input" id="m-port" value="${isEdit ? site.listen_port : ''}" placeholder="如：8001" min="1" max="65535" inputmode="numeric" required>
+      <label>站点子路径</label>
+      <input type="text" class="form-input" id="m-prefix" value="${isEdit ? esc(site.path_prefix) : ''}" placeholder="如：/emby01" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="256" required>
+      <div class="form-help">只需填写站点标识（以 / 开头），系统会自动加上全局前缀 <code>${esc(window.ROUTE_PREFIX || '(无)')}</code>。<br>完整访问地址：<code>http://&lt;面板&gt;${esc(window.ROUTE_PREFIX || '')}${isEdit ? esc(site.path_prefix) : '/&lt;子路径&gt;'}/</code></div>
     </div>
     <div class="form-group">
       <label>UA 模式</label>
       <select class="form-select modal-select" id="m-ua">
-        <option value="infuse" ${(!isEdit || site.ua_mode === 'infuse') ? 'selected' : ''}>Infuse</option>
+        <option value="passthrough" ${(!isEdit || site.ua_mode === 'passthrough') ? 'selected' : ''}>跟随（不改写）</option>
+        <option value="infuse" ${isEdit && site.ua_mode === 'infuse' ? 'selected' : ''}>Infuse</option>
         <option value="web" ${isEdit && site.ua_mode === 'web' ? 'selected' : ''}>Web</option>
         <option value="client" ${isEdit && site.ua_mode === 'client' ? 'selected' : ''}>客户端</option>
-        <option value="custom">自定义</option>
+        <option value="custom" ${isEdit && site.ua_mode === 'custom' ? 'selected' : ''}>自定义</option>
       </select>
     </div>
     <div class="form-group" id="m-custom-ua-group" hidden>
@@ -323,14 +325,14 @@ function showSiteModal(site) {
       playback_target_url: allHosts.length > 0 ? allHosts[0] : '',
       playback_mode: document.getElementById('m-playback-mode').value,
       stream_hosts: allHosts.length > 1 ? allHosts.slice(1) : [],
-      listen_port: parseInt(document.getElementById('m-port').value),
+      path_prefix: document.getElementById('m-prefix').value.trim(),
       ua_mode: uaMode,
       ...customUAPayload,
       traffic_quota: parseInt(document.getElementById('m-quota').value || 0) * 1073741824,
       speed_limit: parseInt(document.getElementById('m-speed').value || 0),
     };
 
-    if (!data.name || !data.target_url || !data.listen_port) {
+    if (!data.name || !data.target_url || !data.path_prefix) {
       Toast.error('请填写所有必填项');
       return;
     }

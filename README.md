@@ -3,7 +3,7 @@
 # Meridian
 
 轻量级 Emby 反向代理管理面板
-单文件 Go 后端 + 嵌入式 SPA 前端，开箱即用
+单端口服务 + 嵌入式 SPA 前端，开箱即用
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)](https://pkg.go.dev/modernc.org/sqlite)
@@ -23,7 +23,7 @@
 
 Meridian 是一个专为 Emby 媒体服务器设计的反向代理管理面板（Emby reverse proxy management panel）。它解决的核心问题是：**当你需要在一台机器上管理多个 Emby 反代站点时，不想手写 Nginx 配置，不想逐个维护 UA 伪装规则，也不想自己实现流量计量和限速。**
 
-Meridian 把这些事情打包成一个单二进制程序，带管理界面，带实时监控，开箱可用。
+Meridian 把这些事情打包成一个单二进制程序，带管理界面，带实时监控，开箱可用。所有站点共享同一个面板端口，通过 URL 路径前缀区分（如 `/s/site1/`、`/s/site2/`）。
 
 ## 友链
 
@@ -34,7 +34,8 @@ Meridian 把这些事情打包成一个单二进制程序，带管理界面，�
 
 | 功能 | 说明 |
 |------|------|
-| **多站点反代** | 每个站点独立监听端口，独立配置上游地址 |
+| **多站点反代** | 每个站点通过独立的 URL 路径前缀访问，共享面板端口 |
+| **路径前缀路由** | 站点由 `path_prefix`（如 `/s/emby1`）区分，无需为每个站点开放独立端口 |
 | **双上游分流** | 网页/API 和播放/转码流量可分别指向不同上游 |
 | **UA 伪装** | 3 种预设（Infuse / Web / 客户端）或每站自定义身份；HTTP、WebSocket 与受限播放重定向统一改写 |
 | **流量管控** | 按站点统计流量、设置限速、设置配额 |
@@ -78,7 +79,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/insta
 bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh) uninstall
 ```
 
-选择配置域名时，脚本会安装或复用 Nginx、Certbot（支持 apt、dnf/yum、apk、pacman），申请证书并启用 HTTP→HTTPS。生成的配置只代理管理面板 `127.0.0.1:9090`（或自定义 `PORT`），不会读取或修改站点回源、播放地址、50001 或其他站点监听端口。macOS 可安装 Meridian，但不支持自动域名配置。
+选择配置域名时，脚本会安装或复用 Nginx、Certbot（支持 apt、dnf/yum、apk、pacman），申请证书并启用 HTTP→HTTPS。生成的配置只代理管理面板 `127.0.0.1:9090`（或自定义 `PORT`），不会读取或修改站点回源、播放地址。macOS 可安装 Meridian，但不支持自动域名配置。
 
 更新和改密会在内部自动创建一致性备份、执行健康检查并在失败时回滚；这些内部操作不再作为公开菜单命令。备份默认保存在 `/opt/meridian-backups`，权限为 `0600`，其中包含数据库和密钥，请按敏感文件保管。卸载默认保留数据和备份；`--purge` 才删除数据，并且不会删除 Nginx、Certbot 或证书。
 
@@ -92,13 +93,13 @@ docker run -d --name meridian \
   --security-opt no-new-privileges:true \
   --ulimit nofile=65536:65536 \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
-  -p 127.0.0.1:9090:9090 -p 8001-8010:8001-8010 \
+  -p 127.0.0.1:9090:9090 \
   -v meridian-data:/app/data \
   -e JWT_SECRET=$(openssl rand -hex 32) \
   ghcr.io/snnabb/meridian:latest
 ```
 
-> `8001-8010` 是反代站点监听端口范围，按实际需要调整。
+> 所有反代站点流量共享面板端口（默认 9090），通过 URL 路径前缀区分，无需映射额外端口。
 >
 > 管理面板默认只映射到宿主机 `127.0.0.1:9090`，建议再通过 HTTPS 反向代理访问。如果确实需要直接通过公网 IP 访问，可改成 `-p 9090:9090`，并同时配置防火墙白名单。
 >
@@ -124,7 +125,7 @@ go build -o meridian .
 JWT_SECRET=$(openssl rand -hex 32) ./meridian
 ```
 
-未配置域名时访问 `http://你的IP:9090`；配置后访问对应的 `https://面板域名`。首次打开会要求输入管理员账号、12–72 字节的密码，以及安装完成时显示的初始化令牌。也可以预先设置 `SETUP_TOKEN` 环境变量。
+未配置域名时访问 `http://你的IP:9090`；配置后访问对应的 `https://面板域名`。首次打开会要求输入管理员账号、8–72 字节的密码，以及安装完成时显示的初始化令牌。也可以预先设置 `SETUP_TOKEN` 环境变量。
 
 ---
 
@@ -147,9 +148,9 @@ unset ADMIN_PASSWORD
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PORT` | `9090` | 管理面板监听端口 |
+| `PORT` | `9090` | 管理面板监听端口（也是站点反代流量入口） |
 | `DB_PATH` | `meridian.db` | SQLite 数据库路径 |
-| `PANEL_BIND_ADDR` | `0.0.0.0` | 仅控制管理面板的绑定地址；域名模式由安装器设为 `127.0.0.1`，不影响站点监听端口 |
+| `PANEL_BIND_ADDR` | `0.0.0.0` | 仅控制管理面板的绑定地址；域名模式由安装器设为 `127.0.0.1` |
 | `PANEL_DOMAIN` | 空 | 安装器记录的单个管理面板域名；不作为播放回源配置 |
 | `JWT_SECRET` | 进程启动时随机生成 | 至少 32 字节的 JWT 签名密钥。**生产环境必须显式设置**，否则每次重启后会话全部失效 |
 | `SETUP_TOKEN` | 首次启动时随机生成 | 首次创建管理员所需的一次性初始化令牌；未设置时会写入启动日志 |
@@ -175,7 +176,6 @@ services:
         hard: 65536
     ports:
       - "127.0.0.1:9090:9090"
-      - "8001-8010:8001-8010"
     volumes:
       - meridian-data:/app/data
     environment:
@@ -193,24 +193,25 @@ volumes:
 ┌─────────────────────────────────────────────┐
 │                 Meridian                      │
 │                                              │
-│  ┌──────────┐   ┌──────────────────────────┐ │
-│  │ 管理面板  │   │     反代引擎 (per-site)   │ │
-│  │ :9090    │   │  :8001  :8002  :800N     │ │
-│  │          │   │                          │ │
-│  │ REST API │   │  HTTP ──► target_url     │ │
-│  │ SSE 推送 │   │  WS   ──► target_url     │ │
-│  │ 静态文件  │   │  播放  ──► playback_target_url │ │
-│  └──────────┘   └──────────────────────────┘ │
-│       │                     │                │
-│  ┌──────────────────────────────────────┐    │
-│  │            SQLite (嵌入式)            │    │
-│  └──────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────┐ │
+│  │          主端口（默认 9090）              │ │
+│  │                                         │ │
+│  │  /api/*   → REST API（管理面板）        │ │
+│  │  /css/*   → 静态资源                    │ │
+│  │  /js/*    → JavaScript                  │ │
+│  │  /s/xxx/* → 站点代理（path_prefix）     │ │
+│  │  其他     → SPA（catch-all）           │ │
+│  └─────────────────────────────────────────┘ │
+│                     │                         │
+│  ┌──────────────────────────────────────┐     │
+│  │            SQLite (嵌入式)            │     │
+│  └──────────────────────────────────────┘     │
 └─────────────────────────────────────────────┘
 ```
 
 | 组件 | 技术选型 |
 |------|---------|
-| 后端 | 单文件 Go（`main.go`），标准库 `net/http` |
+| 后端 | Go + Gin 路由 + `net/http`，模块化 `internal/` 包 |
 | 前端 | 原生 HTML/CSS/JS SPA，hash 路由，`embed.FS` 嵌入 |
 | 数据库 | `modernc.org/sqlite`（纯 Go，无 CGO） |
 | 认证 | 自实现 HMAC-SHA256 JWT |
@@ -219,19 +220,32 @@ volumes:
 
 ```
 Meridian/
-├── main.go              # 全部后端逻辑（API、反代引擎、诊断、认证）
-├── main_test.go
+├── main.go                  # 入口点、服务器启动
+├── internal/                # 核心模块包
+│   ├── auth.go              # JWT 认证、令牌管理
+│   ├── cli.go               # 命令行工具（admin、版本）
+│   ├── db.go                # SQLite 数据库层、迁移
+│   ├── diag.go              # 故障诊断（TLS、健康探针）
+│   ├── handler_auth.go      # 认证相关 API handler
+│   ├── handler_misc.go      # 仪表盘、流量、SSE handler
+│   ├── handler_site.go      # 站点 CRUD handler
+│   ├── proxy.go             # 反代引擎、WebSocket、流量计量
+│   ├── router.go            # Gin 路由注册、中间件
+│   ├── server.go            # App 状态、登录限流、静态文件服务
+│   ├── ua.go                # User-Agent 配置、Emby 授权头改写
+│   ├── permissions_*.go     # 文件权限（平台相关）
+│   └── main_test.go         # 集成测试
 ├── web/
-│   ├── embed.go          # Go embed 入口
+│   ├── embed.go             # Go embed 入口
 │   └── static/
-│       ├── index.html    # SPA 入口
-│       ├── css/          # 样式
-│       └── js/           # 前端逻辑（按页面拆分）
-├── Dockerfile            # 多阶段构建
+│       ├── index.html       # SPA 入口
+│       ├── css/             # 样式
+│       └── js/              # 前端逻辑（按页面拆分）
+├── Dockerfile               # 多阶段构建
 ├── go.mod / go.sum
 └── .github/workflows/
-    ├── ci.yml            # Push / PR 校验：测试 + 编译
-    └── release.yml       # Tag 发布：多平台构建 + Docker 推送 + Release
+    ├── ci.yml               # Push / PR 校验：测试 + 编译
+    └── release.yml          # Tag 发布：多平台构建 + Docker 推送 + Release
 ```
 
 ---
@@ -256,9 +270,13 @@ Meridian/
 
 **典型场景**：Emby 主服务器负责 API 和元数据，CDN 或专用媒体服务器负责大文件分发。
 
+### 路径前缀
+
+每个站点通过 `path_prefix` 隔离，默认为 `/s/` + 站点标识。客户端通过 `http://面板地址:9090/s/mysite/` 访问对应的 Emby 服务。在创建或编辑站点时，面板会校验路径前缀，确保不与 `/api`、`/css`、`/js` 等保留前缀冲突。
+
 ### UA 身份模式
 
-每个站点可选 Infuse、Web、客户端三个预设，或选择“自定义”并填写 `User-Agent`、Emby `Client`、`Version`。自定义值会在普通 HTTP、WebSocket 以及受配置白名单约束的播放重定向请求中保持一致；`Device` 与 `DeviceId` 会原样保留。为避免请求头注入和 Emby 授权头格式损坏，自定义值只接受受限长度的可打印 ASCII 字符，`Client` 和 `Version` 不接受引号或反斜杠。
+每个站点可选 Infuse、Web、客户端三个预设，或选择"自定义"并填写 `User-Agent`、Emby `Client`、`Version`。自定义值会在普通 HTTP、WebSocket 以及受配置白名单约束的播放重定向请求中保持一致；`Device` 与 `DeviceId` 会原样保留。为避免请求头注入和 Emby 授权头格式损坏，自定义值只接受受限长度的可打印 ASCII 字符，`Client` 和 `Version` 不接受引号或反斜杠。
 
 ---
 
@@ -271,10 +289,10 @@ Meridian/
 | **主回源 TLS** | 主回源 HTTPS 站点证书 | 证书有效期、颁发机构展示 | 不是 Meridian 自己监听端口的证书 |
 | **播放回源 TLS** | 播放回源 HTTPS 站点证书 | 仅在播放回源为独立 HTTPS 上游时单独展示 | 不负责自动签发或续期 |
 | **请求头配置** | 本地 UA 配置 | 代理将发送给上游的 UA / Client / Version 值 | 不是远端回显验证 |
-| **代理状态** | 本地反代进程 | 是否运行、监听端口 | — |
+| **代理状态** | 本地反代进程 | 是否运行、路径前缀 | — |
 
-当 `playback_target_url` 为空时，诊断页会明确标记“播放回源回退到主回源”；当它与 `target_url` 相同时，诊断页会复用主回源结果而不重复展示完全相同的诊断块。
-播放回源健康会额外展示当前轻量探针的方法、目标 URL 和返回状态，帮助区分“播放路径可达”与“完整播放成功”这两个不同概念。
+当 `playback_target_url` 为空时，诊断页会明确标记"播放回源回退到主回源"；当它与 `target_url` 相同时，诊断页会复用主回源结果而不重复展示完全相同的诊断块。
+播放回源健康会额外展示当前轻量探针的方法、目标 URL 和返回状态，帮助区分"播放路径可达"与"完整播放成功"这两个不同概念。
 
 ---
 
@@ -336,7 +354,7 @@ Meridian `v1` 明确定位为一个**单管理员、轻量、可直接落地**�
 2. 备份当前二进制、数据库文件和 `JWT_SECRET` 所在的环境配置。
 3. 替换为新版本二进制或新镜像。
 4. 用原来的 `JWT_SECRET` 和数据库重新启动。
-5. 登录面板后检查站点列表、端口监听和诊断页。
+5. 登录面板后检查站点列表、路径前缀和诊断页。
 
 如果升级后临时忘记保留 `JWT_SECRET`，历史 JWT 会全部失效，表现为所有登录状态需要重新建立。
 
@@ -357,7 +375,7 @@ Meridian `v1` 明确定位为一个**单管理员、轻量、可直接落地**�
 2. 还原数据库文件到原路径。
 3. 还原原来的 `JWT_SECRET`。
 4. 启动 Meridian。
-5. 验证管理员登录、站点配置和关键代理端口。
+5. 验证管理员登录、站点配置和代理路由。
 
 如果你使用 Docker，恢复时同样要保留挂载卷里的数据库文件，并继续使用原来的 `JWT_SECRET`。
 
@@ -379,10 +397,11 @@ Meridian `v1` 明确定位为一个**单管理员、轻量、可直接落地**�
 - 管理面板本身不终止 TLS，公网部署必须放在 HTTPS 反向代理之后
 - TLS 诊断会验证上游证书，但不负责证书签发和续期
 - UA 诊断是本地配置预览，不验证远端实际收到的请求头
+- 所有站点共享同一个面板端口，通过 URL 路径前缀（path_prefix）区分
 
 ## 开发须知
 
-- 后端代码保持在 `main.go`，不拆分文件
+- 后端代码按职责拆分为 `internal/` 包：`auth`（JWT）、`db`（数据层）、`ua`（UA 改写）、`proxy`（代理引擎）、`diag`（诊断）、`router`（路由）、`server`（共享状态）、`handler_*`（API 处理器）
 - 前端使用 hash 路由（`#/dashboard`、`#/sites`、`#/diagnostics`）
 - API 认证使用 JWT Bearer Token
 - SQLite 驱动名为 `sqlite`（不是 `sqlite3`）

@@ -45,7 +45,7 @@ function renderDashboard() {
       <div style="overflow-x:auto">
         <table>
           <thead><tr>
-            <th>站点</th><th>状态</th><th>回源地址</th><th>UA 模式</th><th>端口</th><th>已用流量</th>
+            <th>站点</th><th>状态</th><th>回源地址</th><th>UA 模式</th><th>访问路径</th><th>已用流量</th>
           </tr></thead>
           <tbody id="dash-table"></tbody>
         </table>
@@ -187,7 +187,7 @@ async function loadDashboardTable() {
         <td><span class="status-badge"><span class="status-led ${s.running ? 'on' : 'off'}"></span>${s.running ? '运行中' : '已停止'}</span></td>
         <td class="mono">${esc(s.target_url)}</td>
         <td><span class="pill ${uaClassMap[s.ua_mode] || 'pill-blue'}">${esc(uaNameMap[s.ua_mode] || s.ua_mode)}</span></td>
-        <td class="mono">:${s.listen_port}</td>
+        <td class="mono">${esc((window.ROUTE_PREFIX || '') + s.path_prefix)}</td>
         <td>${formatBytes(s.traffic_used)}</td>
       </tr>
     `).join('');
@@ -200,8 +200,8 @@ async function loadDashboardData() {
   loadDashboardTable();
 }
 
-const uaClassMap = { infuse: 'pill-blue', web: 'pill-green', client: 'pill-orange', custom: 'pill-purple' };
-const uaNameMap = { infuse: 'Infuse', web: 'Web', client: '客户端', custom: '自定义' };
+const uaClassMap = { passthrough: 'pill-gray', infuse: 'pill-blue', web: 'pill-green', client: 'pill-orange', custom: 'pill-purple' };
+const uaNameMap = { passthrough: '跟随', infuse: 'Infuse', web: 'Web', client: '客户端', custom: '自定义' };
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';

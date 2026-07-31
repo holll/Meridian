@@ -1,9 +1,9 @@
 //go:build unix
 
-package main
+package internal
 
 import "syscall"
 
-func setSecureFileCreationMask() {
+func SetSecureFileCreationMask() {
 	syscall.Umask(0077)
 }

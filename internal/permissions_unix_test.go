@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package internal
 
 import (
 	"errors"
@@ -10,8 +10,8 @@ import (
 )
 
 func TestDatabaseFilesAreOwnerOnly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "permissions.db")
-	db, err := openDB(path)
+	path := filepath.Join(t.TempDir(), "permissions.DB")
+	db, err := OpenDB(path)
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}

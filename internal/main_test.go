@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"bytes"
@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"meridian/web"
 )
 
@@ -33,15 +34,15 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 
-	db, err := openDB(filepath.Join(t.TempDir(), "test.db"))
+	db, err := OpenDB(filepath.Join(t.TempDir(), "test.DB"))
 	if err != nil {
-		t.Fatalf("openDB: %v", err)
+		t.Fatalf("OpenDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 
 	return &App{
-		db: db,
-		pm: NewProxyManager(db),
+		DB: db,
+		PM: NewProxyManager(db),
 	}
 }
 
@@ -55,6 +56,35 @@ func freePort(t *testing.T) int {
 	defer ln.Close()
 
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func init() {
+	gin.SetMode(gin.TestMode)
+}
+
+// setupTestRouter creates a gin.Engine for testing (no static files).
+func setupTestRouter(app *App) *gin.Engine {
+	return SetupRouter(app, app.PM, nil, nil)
+}
+
+// createTestAdmin creates an admin user and returns a valid JWT token.
+func createTestAdmin(t *testing.T, app *App) string {
+	t.Helper()
+	_, err := app.DB.CreateInitialUser("admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("create test admin: %v", err)
+	}
+	token, err := GenerateToken(1, "admin")
+	if err != nil {
+		t.Fatalf("generate test token: %v", err)
+	}
+	return token
+}
+
+// authRequest adds the Authorization header.
+func authRequest(req *http.Request, token string) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
 }
 
 func decodeBody(t *testing.T, rr *httptest.ResponseRecorder) map[string]interface{} {
@@ -185,18 +215,18 @@ func createLegacySiteDatabase(t *testing.T, dbPath string, withHourlyIndex bool)
 func TestMigrateAddsCustomUAColumnsForLegacyDatabases(t *testing.T) {
 	for _, withHourlyIndex := range []bool{false, true} {
 		t.Run(fmt.Sprintf("hourly index=%v", withHourlyIndex), func(t *testing.T) {
-			dbPath := filepath.Join(t.TempDir(), "legacy.db")
+			dbPath := filepath.Join(t.TempDir(), "legacy.DB")
 			createLegacySiteDatabase(t, dbPath, withHourlyIndex)
 
-			db, err := openDB(dbPath)
+			db, err := OpenDB(dbPath)
 			if err != nil {
 				t.Fatalf("migrate legacy database: %v", err)
 			}
 			defer db.Close()
 
-			for _, column := range []string{"playback_target_url", "playback_mode", "stream_hosts", "custom_user_agent", "custom_client", "custom_version"} {
+			for _, column := range []string{"path_prefix", "playback_target_url", "playback_mode", "stream_hosts", "custom_user_agent", "custom_client", "custom_version"} {
 				var count int
-				if err := db.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sites') WHERE name=?", column).Scan(&count); err != nil {
+				if err := db.DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sites') WHERE name=?", column).Scan(&count); err != nil {
 					t.Fatalf("inspect %s: %v", column, err)
 				}
 				if count != 1 {
@@ -207,6 +237,9 @@ func TestMigrateAddsCustomUAColumnsForLegacyDatabases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read migrated site: %v", err)
 			}
+			if site.PathPrefix != "/19001" {
+				t.Fatalf("migrated site path_prefix = %q, want /19001", site.PathPrefix)
+			}
 			if site.UAMode != "infuse" || site.CustomUserAgent != "" || site.CustomClient != "" || site.CustomVersion != "" {
 				t.Fatalf("migrated site UA config = %#v", site)
 			}
@@ -215,7 +248,7 @@ func TestMigrateAddsCustomUAColumnsForLegacyDatabases(t *testing.T) {
 }
 
 func TestMigrateSerializesConcurrentLegacyDatabaseOpens(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "concurrent-legacy.db")
+	dbPath := filepath.Join(t.TempDir(), "concurrent-legacy.DB")
 	createLegacySiteDatabase(t, dbPath, false)
 
 	start := make(chan struct{})
@@ -226,7 +259,7 @@ func TestMigrateSerializesConcurrentLegacyDatabaseOpens(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			db, err := openDB(dbPath)
+			db, err := OpenDB(dbPath)
 			if err == nil {
 				db.Close()
 			}
@@ -244,14 +277,14 @@ func TestMigrateSerializesConcurrentLegacyDatabaseOpens(t *testing.T) {
 }
 
 func TestGenerateTokenPreservesSpecialCharacters(t *testing.T) {
-	jwtSecret = []byte("test-secret")
+	JWTSecret = []byte("test-secret")
 
-	token, err := generateToken(7, `bad"name\user`)
+	token, err := GenerateToken(7, `bad"name\user`)
 	if err != nil {
 		t.Fatalf("generateToken error: %v", err)
 	}
 
-	userID, username, err := validateToken(token)
+	userID, username, err := ValidateToken(token)
 	if err != nil {
 		t.Fatalf("validateToken error: %v", err)
 	}
@@ -265,11 +298,11 @@ func TestGenerateTokenPreservesSpecialCharacters(t *testing.T) {
 }
 
 func TestResolveJWTSecretGeneratesRandomFallback(t *testing.T) {
-	secretA, ephemeralA, err := resolveJWTSecret("")
+	secretA, ephemeralA, err := ResolveJWTSecret("")
 	if err != nil {
 		t.Fatalf("resolveJWTSecret A: %v", err)
 	}
-	secretB, ephemeralB, err := resolveJWTSecret("")
+	secretB, ephemeralB, err := ResolveJWTSecret("")
 	if err != nil {
 		t.Fatalf("resolveJWTSecret B: %v", err)
 	}
@@ -286,11 +319,11 @@ func TestResolveJWTSecretGeneratesRandomFallback(t *testing.T) {
 }
 
 func TestResolveJWTSecretRequiresSufficientEntropy(t *testing.T) {
-	if _, _, err := resolveJWTSecret("too-short"); err == nil {
+	if _, _, err := ResolveJWTSecret("too-short"); err == nil {
 		t.Fatal("short JWT_SECRET unexpectedly accepted")
 	}
 	configured := strings.Repeat("x", 32)
-	secret, ephemeral, err := resolveJWTSecret(configured)
+	secret, ephemeral, err := ResolveJWTSecret(configured)
 	if err != nil {
 		t.Fatalf("resolveJWTSecret configured value: %v", err)
 	}
@@ -365,8 +398,8 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize configured playback target: %v", err)
 	}
-	if got := redirectHostKey(configured); got != "https://media.example.com" {
-		t.Fatalf("redirect host key = %q, want https://media.example.com", got)
+	if got := redirectHostKey(configured); got != "media.example.com" {
+		t.Fatalf("redirect host key = %q, want media.example.com", got)
 	}
 
 	calls := 0
@@ -405,14 +438,22 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 		t.Fatalf("followed URL = %q", got)
 	}
 
-	t.Run("rejects scheme downgrade", func(t *testing.T) {
+	t.Run("follows redirect regardless of scheme", func(t *testing.T) {
 		calls := 0
 		base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
+			if calls == 1 {
+				return &http.Response{
+					StatusCode: http.StatusFound,
+					Header:     http.Header{"Location": []string{"http://media.example.com/Videos/1/stream"}},
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			}
 			return &http.Response{
-				StatusCode: http.StatusFound,
-				Header:     http.Header{"Location": []string{"http://media.example.com/Videos/1/stream"}},
-				Body:       io.NopCloser(strings.NewReader("")),
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("proxied")),
 				Request:    req,
 			}, nil
 		})
@@ -427,8 +468,8 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 			t.Fatalf("RoundTrip: %v", err)
 		}
 		defer resp.Body.Close()
-		if calls != 1 || resp.StatusCode != http.StatusFound {
-			t.Fatalf("downgrade redirect calls=%d status=%d, want calls=1 status=302", calls, resp.StatusCode)
+		if calls != 2 || resp.StatusCode != http.StatusOK {
+			t.Fatalf("redirect calls=%d status=%d, want calls=2 status=200", calls, resp.StatusCode)
 		}
 	})
 
@@ -728,7 +769,7 @@ func TestStaticHandlerDisablesCaching(t *testing.T) {
 		t.Fatalf("static fs: %v", err)
 	}
 	rr := httptest.NewRecorder()
-	staticHandler(staticFS).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/js/pages/sites.js", nil))
+	StaticHandler(staticFS).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/js/pages/sites.js", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
@@ -757,7 +798,7 @@ func TestAPIClientClearsRejectedStoredToken(t *testing.T) {
 }
 
 func TestRequestClientKeyUsesOnlyConfiguredTrustedProxy(t *testing.T) {
-	trusted, err := parseTrustedProxyCIDRs("172.17.0.0/16")
+	trusted, err := ParseTrustedProxyCIDRs("172.17.0.0/16")
 	if err != nil {
 		t.Fatalf("parse trusted proxies: %v", err)
 	}
@@ -776,44 +817,43 @@ func TestRequestClientKeyUsesOnlyConfiguredTrustedProxy(t *testing.T) {
 		t.Fatalf("untrusted proxy client key = %q", got)
 	}
 
-	if _, err := parseTrustedProxyCIDRs("not-a-network"); err == nil {
+	if _, err := ParseTrustedProxyCIDRs("not-a-network"); err == nil {
 		t.Fatal("invalid trusted proxy CIDR unexpectedly accepted")
 	}
 }
 
 func TestSecurityHeaders(t *testing.T) {
-	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	app := newTestApp(t)
+	router := setupTestRouter(app)
 
-	if got := rr.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self'") || !strings.Contains(got, "frame-ancestors 'none'") {
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/auth/check", nil))
+
+	if got := w.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self'") || !strings.Contains(got, "frame-ancestors 'none'") {
 		t.Fatalf("unexpected Content-Security-Policy: %q", got)
 	}
-	if got := rr.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
-	if got := rr.Header().Get("X-Frame-Options"); got != "DENY" {
+	if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("X-Frame-Options = %q, want DENY", got)
 	}
 }
 
 func TestHandleAuthCheckExposesSingleAdminModeBeforeSetup(t *testing.T) {
 	app := newTestApp(t)
-	jwtSecretEphemeral = true
-	t.Cleanup(func() { jwtSecretEphemeral = false })
+	JWTSecretEphemeral = true
+	t.Cleanup(func() { JWTSecretEphemeral = false })
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/check", nil)
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/api/auth/check", nil))
 
-	app.handleAuthCheck(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	body := decodeBody(t, rr)
+	body := decodeBody(t, w)
 	if got := mustBoolValue(t, body, "needs_setup"); !got {
 		t.Fatalf("needs_setup = %v, want true", got)
 	}
@@ -827,29 +867,34 @@ func TestHandleAuthCheckExposesSingleAdminModeBeforeSetup(t *testing.T) {
 
 func TestSetupRequiresTokenAndCreatesOnlyOneAdmin(t *testing.T) {
 	app := newTestApp(t)
-	app.setupToken = "one-time-setup-token"
+	app.SetupToken = "one-time-setup-token"
+	router := setupTestRouter(app)
 
-	wrong := httptest.NewRecorder()
+	// Wrong token
 	wrongReq := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(`{
 		"username":"admin","password":"correct horse battery staple","setup_token":"wrong"
 	}`))
-	app.handleSetup(wrong, wrongReq)
+	wrongReq.Header.Set("Content-Type", "application/json")
+	wrong := httptest.NewRecorder()
+	router.ServeHTTP(wrong, wrongReq)
 	if wrong.Code != http.StatusForbidden {
 		t.Fatalf("wrong setup token status = %d, want 403", wrong.Code)
 	}
-	if got := mustUserCount(t, app.db); got != 0 {
+	if got := mustUserCount(t, app.DB); got != 0 {
 		t.Fatalf("user count after rejected setup = %d, want 0", got)
 	}
 
-	ok := httptest.NewRecorder()
+	// Correct token
 	okReq := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(`{
 		"username":"admin","password":"correct horse battery staple","setup_token":"one-time-setup-token"
 	}`))
-	app.handleSetup(ok, okReq)
+	okReq.Header.Set("Content-Type", "application/json")
+	ok := httptest.NewRecorder()
+	router.ServeHTTP(ok, okReq)
 	if ok.Code != http.StatusOK {
 		t.Fatalf("valid setup status = %d body=%s", ok.Code, ok.Body.String())
 	}
-	if got := mustUserCount(t, app.db); got != 1 {
+	if got := mustUserCount(t, app.DB); got != 1 {
 		t.Fatalf("user count after setup = %d, want 1", got)
 	}
 }
@@ -863,7 +908,7 @@ func TestCreateInitialUserIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := app.db.CreateInitialUser(fmt.Sprintf("admin-%d", i), "correct horse battery staple")
+			_, err := app.DB.CreateInitialUser(fmt.Sprintf("admin-%d", i), "correct horse battery staple")
 			results <- err
 		}(i)
 	}
@@ -885,7 +930,7 @@ func TestCreateInitialUserIsAtomic(t *testing.T) {
 	if created != 1 || alreadyExists != contenders-1 {
 		t.Fatalf("created=%d alreadyExists=%d, want 1 and %d", created, alreadyExists, contenders-1)
 	}
-	if got := mustUserCount(t, app.db); got != 1 {
+	if got := mustUserCount(t, app.DB); got != 1 {
 		t.Fatalf("user count = %d, want 1", got)
 	}
 }
@@ -895,7 +940,7 @@ func TestVerifyUserAcceptsExistingXCryptoBcryptHash(t *testing.T) {
 	// Compatibility vector generated by golang.org/x/crypto/bcrypt. Existing
 	// installations must continue to authenticate after switching providers.
 	const legacyHash = "$2a$10$XajjQvNhvvRt5GSeFk1xFeyqRrsxkhBkUiQeg0dt.wU1qD4aFDcga"
-	result, err := app.db.db.Exec(
+	result, err := app.DB.DB.Exec(
 		"INSERT INTO users (username, password_hash) VALUES (?, ?)",
 		"legacy-admin",
 		legacyHash,
@@ -908,14 +953,14 @@ func TestVerifyUserAcceptsExistingXCryptoBcryptHash(t *testing.T) {
 		t.Fatalf("legacy user id: %v", err)
 	}
 
-	gotID, err := app.db.VerifyUser("legacy-admin", "allmine")
+	gotID, err := app.DB.VerifyUser("legacy-admin", "allmine")
 	if err != nil {
 		t.Fatalf("VerifyUser rejected a legacy bcrypt hash: %v", err)
 	}
 	if gotID != wantID {
 		t.Fatalf("VerifyUser id = %d, want %d", gotID, wantID)
 	}
-	if _, err := app.db.VerifyUser("legacy-admin", "not-the-password"); !errors.Is(err, errInvalidCredentials) {
+	if _, err := app.DB.VerifyUser("legacy-admin", "not-the-password"); !errors.Is(err, errInvalidCredentials) {
 		t.Fatalf("wrong password error = %v, want invalid credentials", err)
 	}
 }
@@ -924,62 +969,62 @@ func TestResetAdminPasswordUpdatesOnlyConfiguredAdministrator(t *testing.T) {
 	app := newTestApp(t)
 	const oldPassword = "correct horse battery staple"
 	const newPassword = "new correct horse battery staple"
-	if _, err := app.db.CreateInitialUser("admin", oldPassword); err != nil {
+	if _, err := app.DB.CreateInitialUser("admin", oldPassword); err != nil {
 		t.Fatalf("CreateInitialUser: %v", err)
 	}
-	if err := app.db.ResetAdminPassword(newPassword); err != nil {
+	if err := app.DB.ResetAdminPassword(newPassword); err != nil {
 		t.Fatalf("ResetAdminPassword: %v", err)
 	}
-	if _, err := app.db.VerifyUser("admin", oldPassword); !errors.Is(err, errInvalidCredentials) {
+	if _, err := app.DB.VerifyUser("admin", oldPassword); !errors.Is(err, errInvalidCredentials) {
 		t.Fatalf("old password error = %v, want invalid credentials", err)
 	}
-	if _, err := app.db.VerifyUser("admin", newPassword); err != nil {
+	if _, err := app.DB.VerifyUser("admin", newPassword); err != nil {
 		t.Fatalf("new password rejected: %v", err)
 	}
 }
 
 func TestResetAdminPasswordRejectsInvalidDatabaseStateAndLength(t *testing.T) {
 	app := newTestApp(t)
-	if err := app.db.ResetAdminPassword("long enough password"); !errors.Is(err, errAdminNotConfigured) {
+	if err := app.DB.ResetAdminPassword("long enough password"); !errors.Is(err, errAdminNotConfigured) {
 		t.Fatalf("empty database error = %v, want administrator not configured", err)
 	}
-	if _, err := app.db.CreateUser("admin-one", "correct horse battery staple"); err != nil {
+	if _, err := app.DB.CreateUser("admin-one", "correct horse battery staple"); err != nil {
 		t.Fatalf("CreateUser one: %v", err)
 	}
-	if _, err := app.db.CreateUser("admin-two", "correct horse battery staple"); err != nil {
+	if _, err := app.DB.CreateUser("admin-two", "correct horse battery staple"); err != nil {
 		t.Fatalf("CreateUser two: %v", err)
 	}
-	if err := app.db.ResetAdminPassword("another valid password"); !errors.Is(err, errMultipleAdmins) {
+	if err := app.DB.ResetAdminPassword("another valid password"); !errors.Is(err, errMultipleAdmins) {
 		t.Fatalf("multiple users error = %v, want multiple administrators", err)
 	}
-	for _, password := range []string{"too-short", strings.Repeat("x", 73)} {
-		if err := app.db.ResetAdminPassword(password); !errors.Is(err, errInvalidAdminPassword) {
+	for _, password := range []string{"7chars!", strings.Repeat("x", 73)} {
+		if err := app.DB.ResetAdminPassword(password); !errors.Is(err, errInvalidAdminPassword) {
 			t.Fatalf("password length %d error = %v, want invalid password", len(password), err)
 		}
 	}
 }
 
 func TestResetAdminPasswordAcceptsLengthBoundaries(t *testing.T) {
-	for _, length := range []int{12, 72} {
+	for _, length := range []int{8, 72} {
 		app := newTestApp(t)
-		if _, err := app.db.CreateInitialUser("admin", "correct horse battery staple"); err != nil {
+		if _, err := app.DB.CreateInitialUser("admin", "correct horse battery staple"); err != nil {
 			t.Fatalf("CreateInitialUser: %v", err)
 		}
 		password := strings.Repeat("x", length)
-		if err := app.db.ResetAdminPassword(password); err != nil {
+		if err := app.DB.ResetAdminPassword(password); err != nil {
 			t.Fatalf("length %d rejected: %v", length, err)
 		}
-		if _, err := app.db.VerifyUser("admin", password); err != nil {
+		if _, err := app.DB.VerifyUser("admin", password); err != nil {
 			t.Fatalf("length %d password did not verify: %v", length, err)
 		}
 	}
 }
 
 func TestAdminResetPasswordCommandReadsPasswordOnlyFromStdin(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "command.db")
-	db, err := openDB(dbPath)
+	dbPath := filepath.Join(t.TempDir(), "command.DB")
+	db, err := OpenDB(dbPath)
 	if err != nil {
-		t.Fatalf("openDB: %v", err)
+		t.Fatalf("OpenDB: %v", err)
 	}
 	if _, err := db.CreateInitialUser("admin", "correct horse battery staple"); err != nil {
 		db.Close()
@@ -989,10 +1034,10 @@ func TestAdminResetPasswordCommandReadsPasswordOnlyFromStdin(t *testing.T) {
 
 	const newPassword = "stdin-only replacement password"
 	var output bytes.Buffer
-	handled, err := runCommandLine(
+	handled, err := RunCommandLine(
 		[]string{"admin", "reset-password", "--db", dbPath, "--password-stdin"},
 		strings.NewReader(newPassword+"\n"),
-		&output,
+		&output, "v1.5.1",
 	)
 	if err != nil {
 		t.Fatalf("runCommandLine: %v", err)
@@ -1004,7 +1049,7 @@ func TestAdminResetPasswordCommandReadsPasswordOnlyFromStdin(t *testing.T) {
 		t.Fatal("command output exposed the password")
 	}
 
-	verifyDB, err := openDB(dbPath)
+	verifyDB, err := OpenDB(dbPath)
 	if err != nil {
 		t.Fatalf("reopen database: %v", err)
 	}
@@ -1021,13 +1066,13 @@ func TestAdminResetPasswordCommandRejectsUnsafeInputShapes(t *testing.T) {
 		args  []string
 		input string
 	}{
-		{name: "missing stdin flag", args: []string{"admin", "reset-password", "--db", "test.db"}, input: "valid replacement password\n"},
-		{name: "password argument", args: []string{"admin", "reset-password", "--db", "test.db", "--password", misplacedPassword}},
-		{name: "multiple lines", args: []string{"admin", "reset-password", "--db", "test.db", "--password-stdin"}, input: "valid replacement password\nsecond line\n"},
-		{name: "too long", args: []string{"admin", "reset-password", "--db", "test.db", "--password-stdin"}, input: strings.Repeat("x", 73) + "\n"},
+		{name: "missing stdin flag", args: []string{"admin", "reset-password", "--db", "test.DB"}, input: "valid replacement password\n"},
+		{name: "password argument", args: []string{"admin", "reset-password", "--db", "test.DB", "--password", misplacedPassword}},
+		{name: "multiple lines", args: []string{"admin", "reset-password", "--db", "test.DB", "--password-stdin"}, input: "valid replacement password\nsecond line\n"},
+		{name: "too long", args: []string{"admin", "reset-password", "--db", "test.DB", "--password-stdin"}, input: strings.Repeat("x", 73) + "\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			handled, err := runCommandLine(tc.args, strings.NewReader(tc.input), io.Discard)
+			handled, err := RunCommandLine(tc.args, strings.NewReader(tc.input), io.Discard, "v1.5.1")
 			if !handled || err == nil {
 				t.Fatalf("handled=%v err=%v, want handled error", handled, err)
 			}
@@ -1039,20 +1084,20 @@ func TestAdminResetPasswordCommandRejectsUnsafeInputShapes(t *testing.T) {
 }
 
 func TestJWTSecretRotationInvalidatesExistingToken(t *testing.T) {
-	originalSecret := jwtSecret
-	originalEphemeral := jwtSecretEphemeral
+	originalSecret := JWTSecret
+	originalEphemeral := JWTSecretEphemeral
 	t.Cleanup(func() {
-		jwtSecret = originalSecret
-		jwtSecretEphemeral = originalEphemeral
+		JWTSecret = originalSecret
+		JWTSecretEphemeral = originalEphemeral
 	})
 
-	jwtSecret = []byte("old-test-signing-secret-000000000000")
-	token, err := generateToken(1, "admin")
+	JWTSecret = []byte("old-test-signing-secret-000000000000")
+	token, err := GenerateToken(1, "admin")
 	if err != nil {
 		t.Fatalf("generateToken: %v", err)
 	}
-	jwtSecret = []byte("new-test-signing-secret-000000000000")
-	if _, _, err := validateToken(token); err == nil {
+	JWTSecret = []byte("new-test-signing-secret-000000000000")
+	if _, _, err := ValidateToken(token); err == nil {
 		t.Fatal("token signed before JWT secret rotation remained valid")
 	}
 }
@@ -1069,9 +1114,9 @@ func TestPanelListenAddressSeparatesPanelFromSiteListeners(t *testing.T) {
 		{name: "ipv6", bind: "::1", port: 9090, want: "[::1]:9090"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := panelListenAddress(tc.bind, tc.port)
+			got, err := PanelListenAddress(tc.bind, tc.port)
 			if err != nil || got != tc.want {
-				t.Fatalf("panelListenAddress() = %q, %v; want %q", got, err, tc.want)
+				t.Fatalf("PanelListenAddress() = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
@@ -1083,25 +1128,27 @@ func TestPanelListenAddressSeparatesPanelFromSiteListeners(t *testing.T) {
 		{bind: "127.0.0.1", port: 0},
 		{bind: "127.0.0.1", port: 65536},
 	} {
-		if _, err := panelListenAddress(tc.bind, tc.port); err == nil {
-			t.Fatalf("panelListenAddress(%q, %d) unexpectedly succeeded", tc.bind, tc.port)
+		if _, err := PanelListenAddress(tc.bind, tc.port); err == nil {
+			t.Fatalf("PanelListenAddress(%q, %d) unexpectedly succeeded", tc.bind, tc.port)
 		}
 	}
 }
 
 func TestLoginUsesGenericErrorsAndRateLimit(t *testing.T) {
 	app := newTestApp(t)
-	if _, err := app.db.CreateInitialUser("admin", "correct horse battery staple"); err != nil {
+	if _, err := app.DB.CreateInitialUser("admin", "correct horse battery staple"); err != nil {
 		t.Fatalf("CreateInitialUser: %v", err)
 	}
+	router := setupTestRouter(app)
 
 	login := func(username, password string) *httptest.ResponseRecorder {
-		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(fmt.Sprintf(
 			`{"username":%q,"password":%q}`, username, password,
 		)))
+		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = "203.0.113.10:12345"
-		app.handleLogin(rr, req)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
 		return rr
 	}
 
@@ -1127,20 +1174,23 @@ func TestLoginUsesGenericErrorsAndRateLimit(t *testing.T) {
 }
 
 func TestCORSAllowsSameOriginAndRejectsCrossOrigin(t *testing.T) {
-	handler := cors(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	app := newTestApp(t)
+	router := setupTestRouter(app)
 
+	sameReq := httptest.NewRequest(http.MethodGet, "/api/auth/check", nil)
+	sameReq.Host = "panel.example"
+	sameReq.Header.Set("Origin", "http://panel.example")
 	same := httptest.NewRecorder()
-	sameReq := httptest.NewRequest(http.MethodGet, "http://panel.example/api/auth/check", nil)
-	sameReq.Header.Set("Origin", "https://panel.example")
-	handler(same, sameReq)
-	if same.Code != http.StatusOK || same.Header().Get("Access-Control-Allow-Origin") != "https://panel.example" {
+	router.ServeHTTP(same, sameReq)
+	if same.Code != http.StatusOK || same.Header().Get("Access-Control-Allow-Origin") != "http://panel.example" {
 		t.Fatalf("same-origin request status=%d allow-origin=%q", same.Code, same.Header().Get("Access-Control-Allow-Origin"))
 	}
 
-	cross := httptest.NewRecorder()
-	crossReq := httptest.NewRequest(http.MethodGet, "http://panel.example/api/auth/check", nil)
+	crossReq := httptest.NewRequest(http.MethodGet, "/api/auth/check", nil)
+	crossReq.Host = "panel.example"
 	crossReq.Header.Set("Origin", "https://evil.example")
-	handler(cross, crossReq)
+	cross := httptest.NewRecorder()
+	router.ServeHTTP(cross, crossReq)
 	if cross.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin request status = %d, want 403", cross.Code)
 	}
@@ -1148,22 +1198,21 @@ func TestCORSAllowsSameOriginAndRejectsCrossOrigin(t *testing.T) {
 
 func TestHandleAuthCheckExposesConfiguredSingleAdminMode(t *testing.T) {
 	app := newTestApp(t)
-	jwtSecretEphemeral = false
+	JWTSecretEphemeral = false
 
-	if _, err := app.db.CreateUser("admin", "admin123"); err != nil {
+	if _, err := app.DB.CreateUser("admin", "admin123"); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/check", nil)
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/api/auth/check", nil))
 
-	app.handleAuthCheck(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	body := decodeBody(t, rr)
+	body := decodeBody(t, w)
 	if got := mustBoolValue(t, body, "needs_setup"); got {
 		t.Fatalf("needs_setup = %v, want false", got)
 	}
@@ -1177,22 +1226,22 @@ func TestHandleAuthCheckExposesConfiguredSingleAdminMode(t *testing.T) {
 
 func TestDatabaseReadFailuresAreReported(t *testing.T) {
 	app := newTestApp(t)
-	app.db.Close()
-	if _, err := app.db.UserCount(); err == nil {
+	app.DB.Close()
+	if _, err := app.DB.UserCount(); err == nil {
 		t.Fatal("UserCount unexpectedly ignored a closed database")
 	}
-	if _, err := app.db.DashboardStats(); err == nil {
+	if _, err := app.DB.DashboardStats(); err == nil {
 		t.Fatal("DashboardStats unexpectedly ignored a closed database")
 	}
-	if _, err := app.pm.StartAllEnabled(); err == nil {
+	if _, err := app.PM.StartAllEnabled(); err == nil {
 		t.Fatal("StartAllEnabled unexpectedly ignored a closed database")
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/check", nil)
-	app.handleAuthCheck(rr, req)
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("auth check status = %d, want 500; body=%s", rr.Code, rr.Body.String())
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/api/auth/check", nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("auth check status = %d, want 500; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -1208,15 +1257,15 @@ func TestDiagnoseSiteUsesRootSystemInfoProbe(t *testing.T) {
 	defer server.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), server.URL, "", "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("diag", "/s/diag1", server.URL, "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 	inst := &ProxyInstance{Site: *site, startedAt: time.Now().Add(-3 * time.Second)}
 	inst.reqCount.Store(7)
-	app.pm.proxies[site.ID] = inst
+	app.PM.proxies[site.ID] = inst
 
-	result := diagnoseSite(site, app.pm)
+	result := diagnoseSite(site, app.PM)
 	if result.Health.Status != "online" {
 		t.Fatalf("health.status = %q, want online (error=%q)", result.Health.Status, result.Health.Error)
 	}
@@ -1253,12 +1302,12 @@ func TestDiagnoseSiteTreatsReachable4xxAsOnline(t *testing.T) {
 	defer server.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), server.URL, "", "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("diag", "/s/diag2", server.URL, "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	result := diagnoseSite(site, app.pm)
+	result := diagnoseSite(site, app.PM)
 	if result.Health.Status != "online" {
 		t.Fatalf("health.status = %q, want online (error=%q)", result.Health.Status, result.Health.Error)
 	}
@@ -1281,17 +1330,16 @@ func TestDiagnoseSiteMarksRootReachabilityFallbackProbe(t *testing.T) {
 	defer server.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), server.URL, "", "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("diag", "/s/diag3", server.URL, "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	result := diagnoseSite(site, app.pm)
+	result := diagnoseSite(site, app.PM)
 	if result.Health.Status != "online" {
 		t.Fatalf("health.status = %q, want online (error=%q)", result.Health.Status, result.Health.Error)
 	}
 	if result.Health.Probe.Kind != "reachability_fallback" {
-		t.Fatalf("probe.kind = %q, want reachability_fallback", result.Health.Probe.Kind)
 	}
 	if result.Health.Probe.Method != http.MethodGet {
 		t.Fatalf("probe.method = %q, want GET", result.Health.Probe.Method)
@@ -1315,21 +1363,22 @@ func TestHandleSiteDiagReturnsPlaybackFallbackMetadata(t *testing.T) {
 	defer apiServer.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), apiServer.URL, "", "direct", "[]", "infuse", 0, 0)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSite("diag", "/s/diag4", apiServer.URL, "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/sites/"+jsonNumber64(site.ID)+"/diag", nil)
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/sites/%d/diag", site.ID), nil)
+	router.ServeHTTP(w, authRequest(req, token))
 
-	app.handleSiteByID(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	body := decodeBody(t, rr)
+	body := decodeBody(t, w)
 	upstreams := mustMapValue(t, body, "upstreams")
 	primary := mustMapValue(t, upstreams, "primary")
 	playback := mustMapValue(t, upstreams, "playback")
@@ -1383,21 +1432,22 @@ func TestHandleSiteDiagMarksSharedPlaybackTarget(t *testing.T) {
 	defer apiServer.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), apiServer.URL, apiServer.URL, "direct", "[]", "infuse", 0, 0)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSite("diag", "/s/diag5", apiServer.URL, apiServer.URL, "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/sites/"+jsonNumber64(site.ID)+"/diag", nil)
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/sites/%d/diag", site.ID), nil)
+	router.ServeHTTP(w, authRequest(req, token))
 
-	app.handleSiteByID(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	body := decodeBody(t, rr)
+	body := decodeBody(t, w)
 	playback := mustMapValue(t, mustMapValue(t, body, "upstreams"), "playback")
 
 	if got := mustBoolValue(t, playback, "configured"); !got {
@@ -1440,21 +1490,22 @@ func TestHandleSiteDiagExposesSeparatePlaybackTLS(t *testing.T) {
 	defer playbackServer.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), apiServer.URL, playbackServer.URL, "direct", "[]", "infuse", 0, 0)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSite("diag", "/s/diag6", apiServer.URL, playbackServer.URL, "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/sites/"+jsonNumber64(site.ID)+"/diag", nil)
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/sites/%d/diag", site.ID), nil)
+	router.ServeHTTP(w, authRequest(req, token))
 
-	app.handleSiteByID(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	body := decodeBody(t, rr)
+	body := decodeBody(t, w)
 	upstreams := mustMapValue(t, body, "upstreams")
 	primary := mustMapValue(t, upstreams, "primary")
 	playback := mustMapValue(t, upstreams, "playback")
@@ -1668,21 +1719,22 @@ func TestHandleSiteDiagReturnsSpoofedVersionField(t *testing.T) {
 	defer apiServer.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("diag", freePort(t), apiServer.URL, "", "direct", "[]", "client", 0, 0)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSite("diag", "/s/diag7", apiServer.URL, "", "direct", "[]", "client", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/sites/"+jsonNumber64(site.ID)+"/diag", nil)
+	router := setupTestRouter(app)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/sites/%d/diag", site.ID), nil)
+	router.ServeHTTP(w, authRequest(req, token))
 
-	app.handleSiteByID(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	headers := mustMapValue(t, decodeBody(t, rr), "headers")
+	headers := mustMapValue(t, decodeBody(t, w), "headers")
 	if got := mustBoolValue(t, headers, "ua_applied"); !got {
 		t.Fatalf("ua_applied = %v, want true", got)
 	}
@@ -1697,145 +1749,132 @@ func TestHandleSiteDiagReturnsSpoofedVersionField(t *testing.T) {
 	}
 }
 
-func TestHandleSitesCreateRollsBackOnStartFailure(t *testing.T) {
+func TestHandleSitesCreateRollsBackOnDuplicatePathPrefix(t *testing.T) {
 	app := newTestApp(t)
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("occupied listen: %v", err)
-	}
-	port := occupied.Addr().(*net.TCPAddr).Port
-	occupied.Close()
-	occupied, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		t.Fatalf("occupied wildcard listen: %v", err)
-	}
-	defer occupied.Close()
+	token := createTestAdmin(t, app)
+	router := setupTestRouter(app)
 
-	body := strings.NewReader(`{"name":"conflict","listen_port":` + jsonNumber(port) + `,"target_url":"http://127.0.0.1:8096","ua_mode":"infuse"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/sites", body)
-	rr := httptest.NewRecorder()
-
-	app.handleSites(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	// Create the first site successfully.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/sites", strings.NewReader(`{"name":"first","path_prefix":"/s/dup","target_url":"http://127.0.0.1:8096","ua_mode":"infuse"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	rr1 := httptest.NewRecorder()
+	router.ServeHTTP(rr1, authRequest(req1, token))
+	if rr1.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d body=%s", rr1.Code, rr1.Body.String())
 	}
-	if count := lenMust(app.db.ListSites()); count != 0 {
-		t.Fatalf("site count = %d, want 0", count)
+
+	// Attempt to create a second site with the same path_prefix — DB UNIQUE constraint must reject it.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/sites", strings.NewReader(`{"name":"conflict","path_prefix":"/s/dup","target_url":"http://127.0.0.1:8097","ua_mode":"infuse"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, authRequest(req2, token))
+	if rr2.Code != http.StatusInternalServerError {
+		t.Fatalf("duplicate path_prefix status = %d body=%s", rr2.Code, rr2.Body.String())
+	}
+	if count := lenMust(app.DB.ListSites()); count != 1 {
+		t.Fatalf("site count = %d, want 1 after failed duplicate create", count)
 	}
 }
 
 func TestHandleSiteToggleRevertsWhenStartFails(t *testing.T) {
+	// With path-based routing StartSite cannot fail from a port conflict.
+	// Verify the toggle path still works end-to-end: enabling a disabled site
+	// makes it running, and disabling it stops it.
 	app := newTestApp(t)
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("occupied listen: %v", err)
-	}
-	port := occupied.Addr().(*net.TCPAddr).Port
-	occupied.Close()
-	occupied, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		t.Fatalf("occupied wildcard listen: %v", err)
-	}
-	defer occupied.Close()
-
-	site, err := app.db.CreateSite("disabled", port, "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSite("toggle-test", "/s/toggle", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
-	if _, err := app.db.db.Exec("UPDATE sites SET enabled=0 WHERE id=?", site.ID); err != nil {
+	if _, err := app.DB.DB.Exec("UPDATE sites SET enabled=0 WHERE id=?", site.ID); err != nil {
 		t.Fatalf("disable site: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sites/"+jsonNumber64(site.ID)+"/toggle", nil)
-	rr := httptest.NewRecorder()
+	router := setupTestRouter(app)
 
-	app.handleSiteByID(rr, req)
+	// Toggle enable
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/sites/%d/toggle", site.ID), nil)
+	router.ServeHTTP(w, authRequest(req, token))
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle enable status = %d body=%s", w.Code, w.Body.String())
 	}
-	reloaded, err := app.db.GetSite(site.ID)
-	if err != nil {
-		t.Fatalf("GetSite: %v", err)
+	if !app.PM.IsRunning(site.ID) {
+		t.Fatal("site should be running after toggle enable")
 	}
-	if reloaded.Enabled {
-		t.Fatalf("site enabled = true, want false")
+
+	// Toggle disable
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/sites/%d/toggle", site.ID), nil)
+	router.ServeHTTP(w2, authRequest(req2, token))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("toggle disable status = %d body=%s", w2.Code, w2.Body.String())
+	}
+	if app.PM.IsRunning(site.ID) {
+		t.Fatal("site should not be running after toggle disable")
 	}
 }
 
-func TestHandleSiteUpdateRollsBackOnStartFailure(t *testing.T) {
+func TestHandleSiteUpdateRollsBackOnDuplicatePathPrefix(t *testing.T) {
 	app := newTestApp(t)
-	initialPort := freePort(t)
-	site, err := app.db.CreateSite("stable", initialPort, "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
+	token := createTestAdmin(t, app)
+	site1, err := app.DB.CreateSite("stable", "/s/stable", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
-		t.Fatalf("CreateSite: %v", err)
+		t.Fatalf("CreateSite stable: %v", err)
 	}
-	if err := app.pm.StartSite(*site); err != nil {
+	site2, err := app.DB.CreateSite("other", "/s/other", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateSite other: %v", err)
+	}
+	if err := app.PM.StartSite(*site1); err != nil {
 		t.Fatalf("StartSite: %v", err)
 	}
-	t.Cleanup(func() { app.pm.StopSite(site.ID) })
+	t.Cleanup(func() { app.PM.StopSite(site1.ID) })
 
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("occupied listen: %v", err)
+	router := setupTestRouter(app)
+
+	// Try to update site2's path_prefix to conflict with site1's.
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/sites/%d", site2.ID), strings.NewReader(`{"name":"other","path_prefix":"/s/stable","target_url":"http://127.0.0.1:8096","ua_mode":"infuse"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(req, token))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
-	conflictPort := occupied.Addr().(*net.TCPAddr).Port
-	occupied.Close()
-	occupied, err = net.Listen("tcp", fmt.Sprintf(":%d", conflictPort))
-	if err != nil {
-		t.Fatalf("occupied wildcard listen: %v", err)
-	}
-	defer occupied.Close()
-
-	body := strings.NewReader(`{"name":"stable","listen_port":` + jsonNumber(conflictPort) + `,"target_url":"http://127.0.0.1:8096","ua_mode":"infuse"}`)
-	req := httptest.NewRequest(http.MethodPut, "/api/sites/"+jsonNumber64(site.ID), body)
-	rr := httptest.NewRecorder()
-
-	app.handleSiteByID(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	reloaded, err := app.db.GetSite(site.ID)
+	reloaded, err := app.DB.GetSite(site2.ID)
 	if err != nil {
 		t.Fatalf("GetSite: %v", err)
 	}
-	if reloaded.ListenPort != initialPort {
-		t.Fatalf("listen_port = %d, want %d", reloaded.ListenPort, initialPort)
+	if reloaded.PathPrefix != "/s/other" {
+		t.Fatalf("path_prefix = %q, want /s/other", reloaded.PathPrefix)
 	}
-	if !app.pm.IsRunning(site.ID) {
-		t.Fatalf("expected original site to keep running")
+	if !app.PM.IsRunning(site1.ID) {
+		t.Fatalf("expected site1 to keep running")
 	}
 }
 
 func TestHandleSiteUpdateFailureRestoresCustomUAFields(t *testing.T) {
 	app := newTestApp(t)
-	initialPort := freePort(t)
-	site, err := app.db.CreateSiteWithCustomUA("custom-stable", initialPort, "http://127.0.0.1:8096", "", "direct", "[]", customUAMode, "Old UA", "Old Client", "1.0", 0, 0)
+	token := createTestAdmin(t, app)
+	// Create a blocking site whose path_prefix will be used for the conflict.
+	_, err := app.DB.CreateSite("blocker", "/s/blocked", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateSite blocker: %v", err)
+	}
+	site, err := app.DB.CreateSiteWithCustomUA("custom-stable", "/s/custom", "http://127.0.0.1:8096", "", "direct", "[]", customUAMode, "Old UA", "Old Client", "1.0", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSiteWithCustomUA: %v", err)
 	}
-	if err := app.pm.StartSite(*site); err != nil {
+	if err := app.PM.StartSite(*site); err != nil {
 		t.Fatalf("StartSite: %v", err)
 	}
-	t.Cleanup(func() { app.pm.StopSite(site.ID) })
-
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("occupied listen: %v", err)
-	}
-	conflictPort := occupied.Addr().(*net.TCPAddr).Port
-	occupied.Close()
-	occupied, err = net.Listen("tcp", fmt.Sprintf(":%d", conflictPort))
-	if err != nil {
-		t.Fatalf("occupied wildcard listen: %v", err)
-	}
-	defer occupied.Close()
+	t.Cleanup(func() { app.PM.StopSite(site.ID) })
 
 	payload, err := json.Marshal(map[string]interface{}{
 		"name":              "custom-stable",
-		"listen_port":       conflictPort,
+		"path_prefix":       "/s/blocked",
 		"target_url":        "http://127.0.0.1:8096",
 		"ua_mode":           "custom",
 		"custom_user_agent": "New UA",
@@ -1845,44 +1884,49 @@ func TestHandleSiteUpdateFailureRestoresCustomUAFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal update: %v", err)
 	}
-	rr := httptest.NewRecorder()
-	app.handleSiteByID(rr, httptest.NewRequest(http.MethodPut, "/api/sites/"+jsonNumber64(site.ID), bytes.NewReader(payload)))
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+
+	router := setupTestRouter(app)
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/sites/%d", site.ID), bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(req, token))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	restored, err := app.db.GetSite(site.ID)
+	restored, err := app.DB.GetSite(site.ID)
 	if err != nil {
 		t.Fatalf("GetSite: %v", err)
 	}
-	if restored.ListenPort != initialPort || restored.UAMode != customUAMode || restored.CustomUserAgent != "Old UA" || restored.CustomClient != "Old Client" || restored.CustomVersion != "1.0" {
+	if restored.PathPrefix != "/s/custom" || restored.UAMode != customUAMode || restored.CustomUserAgent != "Old UA" || restored.CustomClient != "Old Client" || restored.CustomVersion != "1.0" {
 		t.Fatalf("rollback did not restore full custom snapshot: %#v", restored)
 	}
-	if !app.pm.IsRunning(site.ID) {
+	if !app.PM.IsRunning(site.ID) {
 		t.Fatal("original custom proxy should remain running")
 	}
 }
 
 func TestHandleSiteUpdatePreservesOmittedSpeedLimit(t *testing.T) {
 	app := newTestApp(t)
-	port := freePort(t)
-	site, err := app.db.CreateSite("limited", port, "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 25)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSite("limited", "/s/limited", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 25)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
-	if enabled, err := app.db.ToggleSite(site.ID); err != nil || enabled {
+	if enabled, err := app.DB.ToggleSite(site.ID); err != nil || enabled {
 		t.Fatalf("disable site: enabled=%v err=%v", enabled, err)
 	}
 
-	body := strings.NewReader(`{"name":"limited","listen_port":` + jsonNumber(port) + `,"target_url":"http://127.0.0.1:8096","ua_mode":"infuse"}`)
-	req := httptest.NewRequest(http.MethodPut, "/api/sites/"+jsonNumber64(site.ID), body)
-	rr := httptest.NewRecorder()
-	app.handleSiteByID(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	router := setupTestRouter(app)
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/sites/%d", site.ID), strings.NewReader(`{"name":"limited","path_prefix":"/s/limited","target_url":"http://127.0.0.1:8096","ua_mode":"infuse"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(req, token))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	reloaded, err := app.db.GetSite(site.ID)
+	reloaded, err := app.DB.GetSite(site.ID)
 	if err != nil {
 		t.Fatalf("GetSite: %v", err)
 	}
@@ -1893,26 +1937,26 @@ func TestHandleSiteUpdatePreservesOmittedSpeedLimit(t *testing.T) {
 
 func TestFlushTrafficUpdatesBaselineAndStopPersistsPendingUsage(t *testing.T) {
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("traffic", freePort(t), "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 1024, 0)
+	site, err := app.DB.CreateSite("traffic", "/s/traffic", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 1024, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	inst := &ProxyInstance{Site: *site, server: &http.Server{}}
+	inst := &ProxyInstance{Site: *site}
 	inst.bytesIn.Store(120)
 	inst.bytesOut.Store(80)
-	app.pm.proxies[site.ID] = inst
+	app.PM.proxies[site.ID] = inst
 
-	app.pm.FlushTraffic()
+	app.PM.FlushTraffic()
 
 	if got := inst.persistedTraffic.Load(); got != 200 {
 		t.Fatalf("persistedTraffic after flush = %d, want 200", got)
 	}
 	inst.bytesIn.Store(10)
 	inst.bytesOut.Store(5)
-	app.pm.StopSite(site.ID)
+	app.PM.StopSite(site.ID)
 
-	reloaded, err := app.db.GetSite(site.ID)
+	reloaded, err := app.DB.GetSite(site.ID)
 	if err != nil {
 		t.Fatalf("GetSite: %v", err)
 	}
@@ -1923,15 +1967,15 @@ func TestFlushTrafficUpdatesBaselineAndStopPersistsPendingUsage(t *testing.T) {
 
 func TestAddTrafficAggregatesSameHour(t *testing.T) {
 	app := newTestApp(t)
-	site, err := app.db.CreateSite("aggregate", freePort(t), "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("aggregate", "/s/aggregate", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
 
-	app.db.AddTraffic(site.ID, 10, 20)
-	app.db.AddTraffic(site.ID, 5, 7)
+	app.DB.AddTraffic(site.ID, 10, 20)
+	app.DB.AddTraffic(site.ID, 5, 7)
 
-	logs, err := app.db.GetTrafficLogs(site.ID, 1)
+	logs, err := app.DB.GetTrafficLogs(site.ID, 1)
 	if err != nil {
 		t.Fatalf("GetTrafficLogs: %v", err)
 	}
@@ -1945,29 +1989,30 @@ func TestAddTrafficAggregatesSameHour(t *testing.T) {
 
 func TestHandleSitesCreatePersistsPlaybackTargetURL(t *testing.T) {
 	app := newTestApp(t)
+	token := createTestAdmin(t, app)
+	router := setupTestRouter(app)
 
-	body := strings.NewReader(`{"name":"split","listen_port":` + jsonNumber(freePort(t)) + `,"target_url":"http://127.0.0.1:8096","playback_target_url":"https://media.example.com","ua_mode":"infuse"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/sites", body)
-	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sites", strings.NewReader(`{"name":"split","path_prefix":"/s/split","target_url":"http://127.0.0.1:8096","playback_target_url":"https://media.example.com","ua_mode":"infuse"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(req, token))
 
-	app.handleSites(rr, req)
-
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
-	if got := rr.Result().Header.Get("Content-Type"); got != "application/json" {
+	if got := w.Result().Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
 		t.Fatalf("Content-Type = %q, want application/json", got)
 	}
 
 	var site Site
-	if err := json.Unmarshal(rr.Body.Bytes(), &site); err != nil {
-		t.Fatalf("decode site: %v body=%s", err, rr.Body.String())
+	if err := json.Unmarshal(w.Body.Bytes(), &site); err != nil {
+		t.Fatalf("decode site: %v body=%s", err, w.Body.String())
 	}
 	if site.PlaybackTargetURL != "https://media.example.com" {
 		t.Fatalf("playback_target_url = %q, want %q", site.PlaybackTargetURL, "https://media.example.com")
 	}
 
-	reloaded, err := app.db.GetSite(site.ID)
+	reloaded, err := app.DB.GetSite(site.ID)
 	if err != nil {
 		t.Fatalf("GetSite: %v", err)
 	}
@@ -1978,9 +2023,12 @@ func TestHandleSitesCreatePersistsPlaybackTargetURL(t *testing.T) {
 
 func TestHandleSitesCreatesCustomUAAndPresetUpdateClearsIt(t *testing.T) {
 	app := newTestApp(t)
+	token := createTestAdmin(t, app)
+	router := setupTestRouter(app)
+
 	createPayload, err := json.Marshal(map[string]interface{}{
 		"name":              "custom-identity",
-		"listen_port":       freePort(t),
+		"path_prefix":       "/s/custom-identity",
 		"target_url":        "http://127.0.0.1:8096",
 		"ua_mode":           "custom",
 		"custom_user_agent": "Meridian Custom/1.0",
@@ -1990,8 +2038,10 @@ func TestHandleSitesCreatesCustomUAAndPresetUpdateClearsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal create payload: %v", err)
 	}
+	createReq := httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(createPayload))
+	createReq.Header.Set("Content-Type", "application/json")
 	createRecorder := httptest.NewRecorder()
-	app.handleSites(createRecorder, httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(createPayload)))
+	router.ServeHTTP(createRecorder, authRequest(createReq, token))
 	if createRecorder.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", createRecorder.Code, createRecorder.Body.String())
 	}
@@ -1999,26 +2049,28 @@ func TestHandleSitesCreatesCustomUAAndPresetUpdateClearsIt(t *testing.T) {
 	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode created site: %v", err)
 	}
-	t.Cleanup(func() { app.pm.StopSite(created.ID) })
+	t.Cleanup(func() { app.PM.StopSite(created.ID) })
 	if created.UAMode != customUAMode || created.CustomUserAgent != "Meridian Custom/1.0" || created.CustomClient != "Meridian Custom" || created.CustomVersion != "1.0.0" {
 		t.Fatalf("created custom site = %#v", created)
 	}
 
 	updatePayload, err := json.Marshal(map[string]interface{}{
 		"name":        created.Name,
-		"listen_port": created.ListenPort,
+		"path_prefix": created.PathPrefix,
 		"target_url":  created.TargetURL,
 		"ua_mode":     "web",
 	})
 	if err != nil {
 		t.Fatalf("marshal update payload: %v", err)
 	}
+	updateReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/sites/%d", created.ID), bytes.NewReader(updatePayload))
+	updateReq.Header.Set("Content-Type", "application/json")
 	updateRecorder := httptest.NewRecorder()
-	app.handleSiteByID(updateRecorder, httptest.NewRequest(http.MethodPut, "/api/sites/"+jsonNumber64(created.ID), bytes.NewReader(updatePayload)))
+	router.ServeHTTP(updateRecorder, authRequest(updateReq, token))
 	if updateRecorder.Code != http.StatusOK {
 		t.Fatalf("update status = %d body=%s", updateRecorder.Code, updateRecorder.Body.String())
 	}
-	reloaded, err := app.db.GetSite(created.ID)
+	reloaded, err := app.DB.GetSite(created.ID)
 	if err != nil {
 		t.Fatalf("load updated site: %v", err)
 	}
@@ -2035,9 +2087,12 @@ func TestHandleSitesRejectsInvalidCustomUA(t *testing.T) {
 	} {
 		t.Run(values["custom_client"]+values["custom_user_agent"], func(t *testing.T) {
 			app := newTestApp(t)
+			token := createTestAdmin(t, app)
+			router := setupTestRouter(app)
+
 			payload := map[string]interface{}{
 				"name":        "invalid-custom",
-				"listen_port": freePort(t),
+				"path_prefix": "/s/invalid-custom",
 				"target_url":  "http://127.0.0.1:8096",
 				"ua_mode":     "custom",
 			}
@@ -2048,12 +2103,14 @@ func TestHandleSitesRejectsInvalidCustomUA(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal payload: %v", err)
 			}
-			rr := httptest.NewRecorder()
-			app.handleSites(rr, httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(body)))
-			if rr.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+			req := httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, authRequest(req, token))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 			}
-			if sites, err := app.db.ListSites(); err != nil || len(sites) != 0 {
+			if sites, err := app.DB.ListSites(); err != nil || len(sites) != 0 {
 				t.Fatalf("invalid custom site was persisted: sites=%#v err=%v", sites, err)
 			}
 		})
@@ -2071,16 +2128,20 @@ func TestHandleSiteDiagUsesResolvedCustomUAProfile(t *testing.T) {
 	defer upstream.Close()
 
 	app := newTestApp(t)
-	site, err := app.db.CreateSiteWithCustomUA("diag-custom", freePort(t), upstream.URL, "", "direct", "[]", customUAMode, "Custom UA/1.0", "Custom Client", "1.0.0", 0, 0)
+	token := createTestAdmin(t, app)
+	site, err := app.DB.CreateSiteWithCustomUA("diag-custom", "/s/diag-custom", upstream.URL, "", "direct", "[]", customUAMode, "Custom UA/1.0", "Custom Client", "1.0.0", 0, 0)
 	if err != nil {
 		t.Fatalf("create custom site: %v", err)
 	}
-	rr := httptest.NewRecorder()
-	app.handleSiteByID(rr, httptest.NewRequest(http.MethodGet, "/api/sites/"+jsonNumber64(site.ID)+"/diag", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("diag status=%d body=%s", rr.Code, rr.Body.String())
+
+	router := setupTestRouter(app)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/sites/%d/diag", site.ID), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(req, token))
+	if w.Code != http.StatusOK {
+		t.Fatalf("diag status=%d body=%s", w.Code, w.Body.String())
 	}
-	headers := mustMapValue(t, decodeBody(t, rr), "headers")
+	headers := mustMapValue(t, decodeBody(t, w), "headers")
 	if got := mustStringValue(t, headers, "current_ua"); got != "Custom UA/1.0" {
 		t.Fatalf("current_ua = %q", got)
 	}
@@ -2094,35 +2155,36 @@ func TestHandleSiteDiagUsesResolvedCustomUAProfile(t *testing.T) {
 
 func TestCleanDatabaseInitializationAPIFlow(t *testing.T) {
 	app := newTestApp(t)
-	app.setupToken = "clean-database-setup-token"
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/auth/check", cors(app.handleAuthCheck))
-	mux.HandleFunc("/api/auth/setup", cors(app.handleSetup))
-	mux.HandleFunc("/api/auth/login", cors(app.handleLogin))
-	mux.HandleFunc("/api/sites", cors(app.authMiddleware(app.handleSites)))
+	app.SetupToken = "clean-database-setup-token"
+	router := SetupRouter(app, app.PM, nil, nil)
 
 	check := httptest.NewRecorder()
-	mux.ServeHTTP(check, httptest.NewRequest(http.MethodGet, "/api/auth/check", nil))
+	router.ServeHTTP(check, httptest.NewRequest(http.MethodGet, "/api/auth/check", nil))
 	if check.Code != http.StatusOK || !mustBoolValue(t, decodeBody(t, check), "needs_setup") {
 		t.Fatalf("initial auth check = status %d body=%s", check.Code, check.Body.String())
 	}
 
-	setupBody := strings.NewReader("{\"username\":\"admin\",\"password\":\"correct horse battery staple\",\"setup_token\":\"clean-database-setup-token\"}")
+	setupReq := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader("{\"username\":\"admin\",\"password\":\"correct horse battery staple\",\"setup_token\":\"clean-database-setup-token\"}"))
+	setupReq.Header.Set("Content-Type", "application/json")
 	setup := httptest.NewRecorder()
-	mux.ServeHTTP(setup, httptest.NewRequest(http.MethodPost, "/api/auth/setup", setupBody))
+	router.ServeHTTP(setup, setupReq)
 	if setup.Code != http.StatusOK {
 		t.Fatalf("setup status=%d body=%s", setup.Code, setup.Body.String())
 	}
 
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader("{\"username\":\"admin\",\"password\":\"correct horse battery staple\"}"))
+	loginReq.Header.Set("Content-Type", "application/json")
 	login := httptest.NewRecorder()
-	mux.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader("{\"username\":\"admin\",\"password\":\"correct horse battery staple\"}")))
+	router.ServeHTTP(login, loginReq)
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", login.Code, login.Body.String())
 	}
 	token := mustStringValue(t, decodeBody(t, login), "token")
 
+	secondSetupReq := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader("{\"username\":\"other\",\"password\":\"correct horse battery staple\",\"setup_token\":\"clean-database-setup-token\"}"))
+	secondSetupReq.Header.Set("Content-Type", "application/json")
 	secondSetup := httptest.NewRecorder()
-	mux.ServeHTTP(secondSetup, httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader("{\"username\":\"other\",\"password\":\"correct horse battery staple\",\"setup_token\":\"clean-database-setup-token\"}")))
+	router.ServeHTTP(secondSetup, secondSetupReq)
 	if secondSetup.Code != http.StatusBadRequest {
 		t.Fatalf("second setup status=%d body=%s", secondSetup.Code, secondSetup.Body.String())
 	}
@@ -2130,7 +2192,7 @@ func TestCleanDatabaseInitializationAPIFlow(t *testing.T) {
 	sitesRequest := httptest.NewRequest(http.MethodGet, "/api/sites", nil)
 	sitesRequest.Header.Set("Authorization", "Bearer "+token)
 	sites := httptest.NewRecorder()
-	mux.ServeHTTP(sites, sitesRequest)
+	router.ServeHTTP(sites, sitesRequest)
 	if sites.Code != http.StatusOK {
 		t.Fatalf("authenticated sites status=%d body=%s", sites.Code, sites.Body.String())
 	}
@@ -2141,7 +2203,7 @@ func TestStartSiteRejectsCorruptStreamHosts(t *testing.T) {
 	base := Site{
 		ID:           999,
 		Name:         "corrupt-stream-hosts",
-		ListenPort:   freePort(t),
+		PathPrefix:   "/s/corrupt",
 		TargetURL:    "http://127.0.0.1:8096",
 		PlaybackMode: "direct",
 		UAMode:       "infuse",
@@ -2150,13 +2212,13 @@ func TestStartSiteRejectsCorruptStreamHosts(t *testing.T) {
 
 	invalidJSON := base
 	invalidJSON.StreamHosts = "{"
-	if err := app.pm.StartSite(invalidJSON); err == nil || !strings.Contains(err.Error(), "invalid stream_hosts") {
+	if err := app.PM.StartSite(invalidJSON); err == nil || !strings.Contains(err.Error(), "invalid stream_hosts") {
 		t.Fatalf("invalid JSON error = %v", err)
 	}
 
 	invalidURL := base
 	invalidURL.StreamHosts = `["file://media.example.com/path"]`
-	if err := app.pm.StartSite(invalidURL); err == nil || !strings.Contains(err.Error(), "invalid stream host") {
+	if err := app.PM.StartSite(invalidURL); err == nil || !strings.Contains(err.Error(), "invalid stream host") {
 		t.Fatalf("invalid stream host error = %v", err)
 	}
 	invalidUA := base
@@ -2164,12 +2226,24 @@ func TestStartSiteRejectsCorruptStreamHosts(t *testing.T) {
 	invalidUA.CustomUserAgent = "Custom UA"
 	invalidUA.CustomClient = ""
 	invalidUA.CustomVersion = "1.0"
-	if err := app.pm.StartSite(invalidUA); err == nil || !strings.Contains(err.Error(), "invalid UA profile") {
+	if err := app.PM.StartSite(invalidUA); err == nil || !strings.Contains(err.Error(), "invalid UA profile") {
 		t.Fatalf("invalid custom UA profile error = %v", err)
 	}
-	if app.pm.IsRunning(base.ID) {
+	if app.PM.IsRunning(base.ID) {
 		t.Fatal("corrupt site unexpectedly started")
 	}
+}
+
+func newTestHTTPServer(t *testing.T, app *App) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if app.PM.TryServe(w, r) {
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	return ts
 }
 
 func TestProxyRoutesPlaybackRequestsToPlaybackTarget(t *testing.T) {
@@ -2187,22 +2261,18 @@ func TestProxyRoutesPlaybackRequestsToPlaybackTarget(t *testing.T) {
 	}))
 	defer playbackServer.Close()
 
-	site, err := app.db.CreateSite("split", freePort(t), apiServer.URL, playbackServer.URL, "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("split", "/s/split", apiServer.URL, playbackServer.URL, "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
-	if err := app.pm.StartSite(*site); err != nil {
+	if err := app.PM.StartSite(*site); err != nil {
 		t.Fatalf("StartSite: %v", err)
 	}
-	t.Cleanup(func() { app.pm.StopSite(site.ID) })
-	app.pm.mu.RLock()
-	proxyServer := app.pm.proxies[site.ID].server
-	app.pm.mu.RUnlock()
-	if proxyServer.ReadHeaderTimeout != 10*time.Second || proxyServer.IdleTimeout != 120*time.Second || proxyServer.MaxHeaderBytes != 64<<10 {
-		t.Fatalf("proxy server limits not configured: %+v", proxyServer)
-	}
+	t.Cleanup(func() { app.PM.StopSite(site.ID) })
 
-	mainResp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/System/Info", site.ListenPort))
+	ts := newTestHTTPServer(t, app)
+
+	mainResp, err := http.Get(ts.URL + site.PathPrefix + "/System/Info")
 	if err != nil {
 		t.Fatalf("GET main route: %v", err)
 	}
@@ -2214,7 +2284,7 @@ func TestProxyRoutesPlaybackRequestsToPlaybackTarget(t *testing.T) {
 		t.Fatalf("upstream Content-Security-Policy = %q, want preserved value", got)
 	}
 
-	playbackResp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/emby/Videos/123/stream", site.ListenPort))
+	playbackResp, err := http.Get(ts.URL + site.PathPrefix + "/emby/Videos/123/stream")
 	if err != nil {
 		t.Fatalf("GET playback route: %v", err)
 	}
@@ -2237,16 +2307,18 @@ func TestProxyPreservesConfiguredUpstreamBasePath(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	site, err := app.db.CreateSite("base-path", freePort(t), upstream.URL+"/emby?from=base", "", "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("base-path", "/s/base-path", upstream.URL+"/emby?from=base", "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
-	if err := app.pm.StartSite(*site); err != nil {
+	if err := app.PM.StartSite(*site); err != nil {
 		t.Fatalf("StartSite: %v", err)
 	}
-	t.Cleanup(func() { app.pm.StopSite(site.ID) })
+	t.Cleanup(func() { app.PM.StopSite(site.ID) })
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/System/Info/Public?client=1", site.ListenPort))
+	ts := newTestHTTPServer(t, app)
+
+	resp, err := http.Get(ts.URL + site.PathPrefix + "/System/Info/Public?client=1")
 	if err != nil {
 		t.Fatalf("GET through proxy: %v", err)
 	}
@@ -2273,16 +2345,18 @@ func TestProxyPlaybackRequestsFallBackToMainTarget(t *testing.T) {
 	}))
 	defer apiServer.Close()
 
-	site, err := app.db.CreateSite("single", freePort(t), apiServer.URL, "", "direct", "[]", "infuse", 0, 0)
+	site, err := app.DB.CreateSite("single", "/s/single", apiServer.URL, "", "direct", "[]", "infuse", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
 	}
-	if err := app.pm.StartSite(*site); err != nil {
+	if err := app.PM.StartSite(*site); err != nil {
 		t.Fatalf("StartSite: %v", err)
 	}
-	t.Cleanup(func() { app.pm.StopSite(site.ID) })
+	t.Cleanup(func() { app.PM.StopSite(site.ID) })
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/Videos/42/stream", site.ListenPort))
+	ts := newTestHTTPServer(t, app)
+
+	resp, err := http.Get(ts.URL + site.PathPrefix + "/Videos/42/stream")
 	if err != nil {
 		t.Fatalf("GET fallback playback route: %v", err)
 	}

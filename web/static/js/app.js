@@ -49,20 +49,23 @@
   });
 
   async function checkAuth() {
-    if (API.token) {
-      enterApp();
-      return;
-    }
-
     try {
       const res = await API.checkSetup();
       authStatus = Object.assign({}, authStatus, res || {});
+      window.ROUTE_PREFIX = res.route_prefix || '';
+      if (API.token) {
+        enterApp();
+        return;
+      }
       if (res.needs_setup) {
         showSetupMode();
         return;
       }
     } catch (e) {
-      // Server not available, just show login
+      if (API.token) {
+        enterApp();
+        return;
+      }
     }
 
     showLoginMode();
@@ -134,8 +137,8 @@
       return;
     }
 
-    if (loginEl._isSetup && password.length < 12) {
-      Toast.error('管理员密码至少需要 12 位');
+    if (loginEl._isSetup && password.length < 8) {
+      Toast.error('管理员密码至少需要 8 位');
       return;
     }
 

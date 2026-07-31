@@ -2,6 +2,7 @@
 meridian
 meridian.exe
 *.exe
+dist/
 
 # Environment / local secrets
 .env
@@ -20,6 +21,7 @@ meridian.exe
 .vscode/
 *.swp
 *.swo
+.claude/
 
 # OS
 .DS_Store
