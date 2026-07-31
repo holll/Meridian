@@ -20,8 +20,6 @@ DATA_DIR="${MERIDIAN_DATA_DIR:-/opt/meridian-relay}"
 SERVICE_FILE="${MERIDIAN_SERVICE_FILE:-/etc/systemd/system/meridian-relay.service}"
 SERVICE_NAME="${MERIDIAN_SERVICE_NAME:-meridian-relay}"
 BIN_NAME="meridian-relay"
-SERVICE_USER="${MERIDIAN_SERVICE_USER:-meridian-relay}"
-SERVICE_GROUP="${MERIDIAN_SERVICE_GROUP:-meridian-relay}"
 ROOT_GROUP="${MERIDIAN_ROOT_GROUP:-$(id -gn 0 2>/dev/null || printf 'root')}"
 ASSUME_YES="${MERIDIAN_ASSUME_YES:-0}"
 
@@ -166,24 +164,6 @@ download_release_binary() {
 
 env_file_path() { printf '%s/.env\n' "$DATA_DIR"; }
 
-ensure_service_user() {
-    local nologin_shell
-    nologin_shell=$(command -v nologin || true)
-    nologin_shell=${nologin_shell:-/usr/sbin/nologin}
-    if command -v useradd >/dev/null 2>&1; then
-        getent group "$SERVICE_GROUP" >/dev/null 2>&1 || as_root groupadd --system "$SERVICE_GROUP"
-        id "$SERVICE_USER" >/dev/null 2>&1 || as_root useradd --system --gid "$SERVICE_GROUP" \
-            --home-dir "$DATA_DIR" --shell "$nologin_shell" --no-create-home "$SERVICE_USER"
-    elif command -v adduser >/dev/null 2>&1; then
-        if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-            as_root addgroup -S "$SERVICE_GROUP" 2>/dev/null || true
-            as_root adduser -S -H -h "$DATA_DIR" -s "$nologin_shell" -G "$SERVICE_GROUP" "$SERVICE_USER"
-        fi
-    else
-        fail "系统缺少 useradd/adduser，无法创建服务用户"
-    fi
-}
-
 prompt_relay_config() {
     local master_url relay_token relay_name relay_isp
     if [ "$ASSUME_YES" = "1" ]; then
@@ -203,11 +183,7 @@ prompt_relay_config() {
     local env_file env_tmp
     env_file=$(env_file_path)
     env_tmp="${DATA_DIR}/.env.new"
-    if is_systemd; then
-        as_root install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
-    else
-        as_root install -d -o "$(id -u)" -g "$(id -g)" -m 0750 "$DATA_DIR"
-    fi
+    as_root install -d -o root -g root -m 0755 "$DATA_DIR"
     {
         printf 'PORT=9091\n'
         printf 'PANEL_BIND_ADDR=0.0.0.0\n'
@@ -219,11 +195,7 @@ prompt_relay_config() {
         fi
     } > "$env_tmp"
     chmod 0600 "$env_tmp"
-    if is_systemd; then
-        as_root install -o root -g "$SERVICE_GROUP" -m 0640 "$env_tmp" "${env_file}.install"
-    else
-        as_root install -o "$(id -u)" -g "$(id -g)" -m 0600 "$env_tmp" "${env_file}.install"
-    fi
+    as_root install -o root -g root -m 0600 "$env_tmp" "${env_file}.install"
     rm -f -- "$env_tmp"
     as_root mv -f "${env_file}.install" "$env_file"
     ok "已创建配置: $env_file"
@@ -241,18 +213,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
-UMask=0077
 EnvironmentFile=${DATA_DIR}/.env
 ExecStart=${INSTALL_DIR}/${BIN_NAME}
 WorkingDirectory=${DATA_DIR}
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
 LimitNOFILE=65536
 
 [Install]
@@ -304,9 +269,6 @@ do_install() {
     tmp_dir=$(mktemp -d)
     chmod 0700 "$tmp_dir"
     download_release_binary "$version" "$tmp_dir"
-    if is_systemd; then
-        ensure_service_user
-    fi
     as_root install -d -o root -g "$ROOT_GROUP" -m 0755 "$INSTALL_DIR"
     as_root install -o root -g "$ROOT_GROUP" -m 0755 "$DOWNLOADED_BINARY" "${current_binary}.new"
     as_root mv -f "${current_binary}.new" "$current_binary"

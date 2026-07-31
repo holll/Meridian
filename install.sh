@@ -20,13 +20,8 @@ DATA_DIR="${MERIDIAN_DATA_DIR:-/opt/meridian}"
 BACKUP_DIR="${MERIDIAN_BACKUP_DIR:-/opt/meridian-backups}"
 SERVICE_FILE="${MERIDIAN_SERVICE_FILE:-/etc/systemd/system/meridian.service}"
 SERVICE_NAME="${MERIDIAN_SERVICE_NAME:-meridian}"
-NGINX_CONFIG="${MERIDIAN_NGINX_CONFIG:-/etc/nginx/conf.d/meridian-panel.conf}"
-NGINX_ROOT="${MERIDIAN_NGINX_ROOT:-/etc/nginx}"
 BIN_NAME="meridian"
-SERVICE_USER="meridian"
-SERVICE_GROUP="meridian"
 ROOT_GROUP="${MERIDIAN_ROOT_GROUP:-$(id -gn 0 2>/dev/null || printf 'root')}"
-NGINX_MARKER="# Managed by Meridian installer - panel only"
 
 while [ "$INSTALL_DIR" != "/" ] && [[ "$INSTALL_DIR" == */ ]]; do INSTALL_DIR="${INSTALL_DIR%/}"; done
 while [ "$DATA_DIR" != "/" ] && [[ "$DATA_DIR" == */ ]]; do DATA_DIR="${DATA_DIR%/}"; done
@@ -35,9 +30,6 @@ while [ "$BACKUP_DIR" != "/" ] && [[ "$BACKUP_DIR" == */ ]]; do BACKUP_DIR="${BA
 PREVIOUS_BIN="${INSTALL_DIR}/${BIN_NAME}.previous"
 ASSUME_YES="${MERIDIAN_ASSUME_YES:-0}"
 PURGE_DATA=0
-DOMAIN_MODE="ask"
-REQUESTED_DOMAIN=""
-CERTBOT_EMAIL=""
 INITIAL_SETUP_TOKEN=""
 LAST_BACKUP_PATH=""
 ROOT_PREFIX=()
@@ -49,9 +41,6 @@ PASSWORD_TMP_DIR=""
 PASSWORD_SNAPSHOT_DIR=""
 PASSWORD_DB_PATH=""
 PASSWORD_TRANSACTION=0
-PANEL_WORK_DIR=""
-PANEL_TRANSACTION=0
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -125,17 +114,6 @@ validate_backup_dir() {
     validate_safe_directory "$BACKUP_DIR" "备份目录"
 }
 
-validate_nginx_config_path() {
-    case "$NGINX_CONFIG" in
-        ""|/|*//*|*/../*|*/..|*/./*|*/.|*$'\n'*)
-            fail "Nginx 配置路径不安全: ${NGINX_CONFIG:-<empty>}"
-            ;;
-    esac
-    [[ "$NGINX_CONFIG" = /* ]] || fail "Nginx 配置路径必须是绝对路径: $NGINX_CONFIG"
-    [ "$(basename -- "$NGINX_CONFIG")" = "meridian-panel.conf" ] \
-        || fail "Nginx 配置文件名必须为 meridian-panel.conf"
-}
-
 validate_db_path() {
     local db_path="$1"
     case "$db_path" in
@@ -148,41 +126,6 @@ validate_db_path() {
 
 valid_version() {
     [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
-}
-
-normalize_domain() {
-    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
-}
-
-valid_domain() {
-    local domain="$1" label remainder
-    [ -n "$domain" ] && [ "${#domain}" -le 253 ] || return 1
-    [ "$domain" = "$(normalize_domain "$domain")" ] || return 1
-    [[ "$domain" != *"://"* && "$domain" != *"/"* && "$domain" != *":"* && "$domain" != *"*"* ]] || return 1
-    [[ "$domain" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || return 1
-    [[ "$domain" == *.* ]] || return 1
-    [[ ! "$domain" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 1
-
-    remainder="$domain"
-    while :; do
-        if [[ "$remainder" == *.* ]]; then
-            label="${remainder%%.*}"
-            remainder="${remainder#*.}"
-        else
-            label="$remainder"
-            remainder=""
-        fi
-        [ -n "$label" ] && [ "${#label}" -le 63 ] || return 1
-        [[ "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
-        [ -n "$remainder" ] || break
-    done
-    [[ "$label" =~ [a-z] ]]
-}
-
-valid_certbot_email() {
-    local email="$1"
-    [ -z "$email" ] && return 0
-    [[ "$email" =~ ^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}$ ]]
 }
 
 download() {
@@ -296,36 +239,8 @@ env_has_key() {
 install_env_file() {
     local source_file="$1" env_file
     env_file=$(env_file_path)
-    if is_systemd; then
-        as_root install -o root -g "$SERVICE_GROUP" -m 0640 "$source_file" "${env_file}.new"
-    else
-        as_root install -o "$(id -u)" -g "$(id -g)" -m 0600 "$source_file" "${env_file}.new"
-    fi
+    as_root install -o root -g "$ROOT_GROUP" -m 0600 "$source_file" "${env_file}.new"
     as_root mv -f "${env_file}.new" "$env_file"
-}
-
-append_env_default() {
-    local key="$1" value="$2" tmp_dir="$3" env_file tmp_file
-    env_file=$(env_file_path)
-    env_has_key "$key" && return 0
-    tmp_file="${tmp_dir}/env-default-${key}"
-    as_root cat "$env_file" > "$tmp_file"
-    printf '%s=%s\n' "$key" "$value" >> "$tmp_file"
-    chmod 0600 "$tmp_file"
-    install_env_file "$tmp_file"
-}
-
-set_panel_env() {
-    local bind_addr="$1" domain="$2" proxies="$3" tmp_dir="$4" env_file tmp_file
-    env_file=$(env_file_path)
-    tmp_file="${tmp_dir}/panel.env"
-    # $1 is an awk field reference, not a shell variable.
-    # shellcheck disable=SC2016
-    as_root awk -F= '$1 != "PANEL_BIND_ADDR" && $1 != "PANEL_DOMAIN" && $1 != "TRUSTED_PROXY_CIDRS" { print }' "$env_file" > "$tmp_file"
-    printf 'PANEL_BIND_ADDR=%s\nPANEL_DOMAIN=%s\nTRUSTED_PROXY_CIDRS=%s\n' \
-        "$bind_addr" "$domain" "$proxies" >> "$tmp_file"
-    chmod 0600 "$tmp_file"
-    install_env_file "$tmp_file"
 }
 
 write_rotated_env() {
@@ -336,20 +251,6 @@ write_rotated_env() {
     as_root awk -F= '$1 != "JWT_SECRET" { print }' "$env_file" > "$output"
     printf 'JWT_SECRET=%s\n' "$secret" >> "$output"
     chmod 0600 "$output"
-}
-
-remove_loopback_proxies() {
-    local current="$1" item result="" old_ifs="$IFS"
-    IFS=','
-    for item in $current; do
-        item=$(printf '%s' "$item" | tr -d '[:space:]')
-        [ -n "$item" ] || continue
-        [ "$item" = "127.0.0.1/32" ] && continue
-        [ "$item" = "::1/128" ] && continue
-        result="${result:+${result},}${item}"
-    done
-    IFS="$old_ifs"
-    printf '%s\n' "$result"
 }
 
 read_config_port() {
@@ -379,53 +280,23 @@ wait_for_health() {
     return 1
 }
 
-ensure_service_user() {
-    local nologin_shell
-    nologin_shell=$(command -v nologin || true)
-    nologin_shell=${nologin_shell:-/usr/sbin/nologin}
-    if command -v useradd >/dev/null 2>&1; then
-        getent group "$SERVICE_GROUP" >/dev/null 2>&1 || as_root groupadd --system "$SERVICE_GROUP"
-        id "$SERVICE_USER" >/dev/null 2>&1 || as_root useradd --system --gid "$SERVICE_GROUP" \
-            --home-dir "$DATA_DIR" --shell "$nologin_shell" --no-create-home "$SERVICE_USER"
-    elif command -v adduser >/dev/null 2>&1; then
-        if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-            as_root addgroup -S "$SERVICE_GROUP" 2>/dev/null || true
-            as_root adduser -S -H -h "$DATA_DIR" -s "$nologin_shell" -G "$SERVICE_GROUP" "$SERVICE_USER"
-        fi
-    else
-        fail "系统缺少 useradd/adduser，无法创建服务用户"
-    fi
-}
-
 prepare_data_and_config() {
     local tmp_dir="$1" env_file secret env_tmp
     validate_data_dir
     env_file=$(env_file_path)
-    if is_systemd; then
-        ensure_service_user
-        as_root install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
-    else
-        as_root install -d -o "$(id -u)" -g "$(id -g)" -m 0750 "$DATA_DIR"
-    fi
+    as_root install -d -o root -g "$ROOT_GROUP" -m 0755 "$DATA_DIR"
 
     if ! as_root test -f "$env_file"; then
         secret=$(generate_secret)
         INITIAL_SETUP_TOKEN=$(generate_secret)
         env_tmp="${tmp_dir}/meridian.env"
-        printf 'JWT_SECRET=%s\nSETUP_TOKEN=%s\nPORT=9090\nDB_PATH=%s/meridian.db\nPANEL_BIND_ADDR=0.0.0.0\nPANEL_DOMAIN=\nTRUSTED_PROXY_CIDRS=\n' \
+        printf 'JWT_SECRET=%s\nSETUP_TOKEN=%s\nPORT=9090\nDB_PATH=%s/meridian.db\nPANEL_BIND_ADDR=0.0.0.0\n' \
             "$secret" "$INITIAL_SETUP_TOKEN" "$DATA_DIR" > "$env_tmp"
         chmod 0600 "$env_tmp"
         install_env_file "$env_tmp"
         ok "已创建安全配置: $env_file"
     else
         as_root test -L "$env_file" && fail "拒绝修改符号链接形式的配置文件: $env_file"
-        append_env_default PANEL_BIND_ADDR 0.0.0.0 "$tmp_dir"
-        append_env_default PANEL_DOMAIN "" "$tmp_dir"
-        append_env_default TRUSTED_PROXY_CIDRS "" "$tmp_dir"
-        if is_systemd; then
-            as_root chown root:"$SERVICE_GROUP" "$env_file"
-            as_root chmod 0640 "$env_file"
-        fi
         info "保留现有配置: $env_file"
     fi
 }
@@ -442,33 +313,11 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
-UMask=0077
 EnvironmentFile=${DATA_DIR}/.env
 ExecStart=${INSTALL_DIR}/${BIN_NAME}
 WorkingDirectory=${DATA_DIR}
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectHostname=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectKernelLogs=true
-ProtectControlGroups=true
-RestrictNamespaces=true
-RestrictSUIDSGID=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictRealtime=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-ReadWritePaths=${DATA_DIR}
 LimitNOFILE=65536
 
 [Install]
@@ -543,375 +392,6 @@ abort_update_transaction() {
     exit 130
 }
 
-detect_package_manager() {
-    local requested="${MERIDIAN_PACKAGE_MANAGER:-}"
-    if [ -n "$requested" ]; then
-        case "$requested" in apt|dnf|yum|apk|pacman) printf '%s\n' "$requested"; return ;; esac
-        return 1
-    fi
-    if command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
-    elif command -v dnf >/dev/null 2>&1; then printf 'dnf\n'
-    elif command -v yum >/dev/null 2>&1; then printf 'yum\n'
-    elif command -v apk >/dev/null 2>&1; then printf 'apk\n'
-    elif command -v pacman >/dev/null 2>&1; then printf 'pacman\n'
-    else return 1
-    fi
-}
-
-install_panel_packages() {
-    local manager="$1"
-    case "$manager" in
-        apt)
-            as_root apt-get update
-            as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx
-            ;;
-        dnf)
-            as_root dnf install -y nginx certbot python3-certbot-nginx
-            ;;
-        yum)
-            as_root yum install -y nginx certbot python3-certbot-nginx
-            ;;
-        apk)
-            as_root apk add --no-cache nginx certbot certbot-nginx
-            ;;
-        pacman)
-            as_root pacman -S --noconfirm --needed nginx certbot certbot-nginx
-            ;;
-        *) return 1 ;;
-    esac
-}
-
-install_panel_dependencies() {
-    local manager
-    [ "$(uname -s)" != "Darwin" ] || {
-        warn "macOS 不支持自动配置面板域名；请自行配置 Nginx/Caddy"
-        return 1
-    }
-    if command -v nginx >/dev/null 2>&1 && command -v certbot >/dev/null 2>&1 \
-        && certbot plugins 2>/dev/null | grep -q 'nginx'; then
-        info "复用已安装的 Nginx、Certbot 和 Nginx 插件"
-        return 0
-    fi
-    manager=$(detect_package_manager) || {
-        warn "未找到受支持的包管理器（apt、dnf/yum、apk、pacman）"
-        return 1
-    }
-    info "使用 ${manager} 安装 Nginx、Certbot 和 Nginx 插件..."
-    install_panel_packages "$manager" || return 1
-    command -v nginx >/dev/null 2>&1 && command -v certbot >/dev/null 2>&1
-}
-
-start_nginx() {
-    if is_systemd; then
-        as_root systemctl enable --now nginx
-    elif command -v rc-service >/dev/null 2>&1; then
-        as_root rc-update add nginx default >/dev/null 2>&1 || true
-        as_root rc-service nginx start >/dev/null 2>&1 || as_root rc-service nginx restart
-    else
-        as_root nginx -t
-        as_root nginx -s reload >/dev/null 2>&1 || as_root nginx
-    fi
-}
-
-nginx_test_and_reload() {
-    as_root nginx -t || return 1
-    if is_systemd; then
-        as_root systemctl reload nginx
-    elif command -v rc-service >/dev/null 2>&1; then
-        as_root rc-service nginx reload
-    else
-        as_root nginx -s reload
-    fi
-}
-
-NGINX_CONFLICT_PATH=""
-find_domain_conflict() {
-    local domain="$1" pattern file
-    NGINX_CONFLICT_PATH=""
-    [ -d "$NGINX_ROOT" ] || return 1
-    pattern=$(printf '%s' "$domain" | sed 's/[.]/\\./g')
-    while IFS= read -r file; do
-        [ "$file" = "$NGINX_CONFIG" ] && continue
-        if as_root grep -Eiq "(^|[[:space:];{}])server_name[[:space:]]+([^;]*[[:space:]])?${pattern}([[:space:];]|$)" "$file" 2>/dev/null; then
-            NGINX_CONFLICT_PATH="$file"
-            return 0
-        fi
-    done < <(as_root find "$NGINX_ROOT" -type f -print 2>/dev/null)
-    return 1
-}
-
-write_panel_nginx_config() {
-    local domain="$1" port="$2" output="$3"
-    cat > "$output" <<NGINXEOF
-${NGINX_MARKER}
-map \$http_upgrade \$meridian_connection_upgrade {
-    default upgrade;
-    '' close;
-}
-
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-
-    client_max_body_size 1m;
-
-    location / {
-        proxy_pass http://127.0.0.1:${port};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$meridian_connection_upgrade;
-        proxy_buffering off;
-        proxy_request_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        send_timeout 3600s;
-    }
-}
-NGINXEOF
-}
-
-snapshot_panel_state() {
-    local work_dir="$1" env_file
-    env_file=$(env_file_path)
-    as_root cp -p -- "$env_file" "${work_dir}/env.before"
-    if as_root test -f "$NGINX_CONFIG"; then
-        as_root cp -p -- "$NGINX_CONFIG" "${work_dir}/nginx.before"
-        printf '1\n' > "${work_dir}/had-nginx"
-    else
-        printf '0\n' > "${work_dir}/had-nginx"
-    fi
-}
-
-restore_panel_state() {
-    local work_dir="$1" had_nginx env_file
-    env_file=$(env_file_path)
-    had_nginx=$(cat "${work_dir}/had-nginx")
-    as_root cp -p -- "${work_dir}/env.before" "${env_file}.restore"
-    as_root mv -f "${env_file}.restore" "$env_file"
-    if [ "$had_nginx" = "1" ]; then
-        as_root install -d -o root -g root -m 0755 "$(dirname -- "$NGINX_CONFIG")"
-        as_root cp -p -- "${work_dir}/nginx.before" "${NGINX_CONFIG}.restore"
-        as_root mv -f "${NGINX_CONFIG}.restore" "$NGINX_CONFIG"
-    else
-        as_root rm -f -- "$NGINX_CONFIG"
-    fi
-    if command -v nginx >/dev/null 2>&1; then
-        nginx_test_and_reload >/dev/null 2>&1 || warn "Nginx 原配置已恢复，但自动重载失败"
-    fi
-    if is_systemd && [ -f "$SERVICE_FILE" ]; then
-        as_root systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
-    fi
-}
-
-cleanup_panel_transaction() {
-    local exit_code=$?
-    if [ "$PANEL_TRANSACTION" = "1" ] && [ -n "$PANEL_WORK_DIR" ]; then
-        warn "面板域名配置中断，正在恢复原配置..."
-        restore_panel_state "$PANEL_WORK_DIR" >/dev/null 2>&1 \
-            || warn "面板配置自动恢复未完成，请检查 Nginx 和 Meridian 服务"
-        PANEL_TRANSACTION=0
-    fi
-    if [ -n "$PANEL_WORK_DIR" ] && [ -d "$PANEL_WORK_DIR" ] && [ "$PANEL_WORK_DIR" != "/" ]; then
-        as_root rm -rf -- "$PANEL_WORK_DIR"
-    fi
-    PANEL_WORK_DIR=""
-    return "$exit_code"
-}
-
-abort_panel_transaction() {
-    trap - INT TERM
-    exit 130
-}
-
-begin_panel_transaction() {
-    PANEL_WORK_DIR="$1"
-    PANEL_TRANSACTION=1
-    trap cleanup_panel_transaction EXIT
-    trap abort_panel_transaction INT TERM
-}
-
-rollback_panel_transaction() {
-    restore_panel_state "$PANEL_WORK_DIR" || warn "面板配置自动恢复未完成，请检查 Nginx 和 Meridian 服务"
-    PANEL_TRANSACTION=0
-    as_root rm -rf -- "$PANEL_WORK_DIR"
-    PANEL_WORK_DIR=""
-    trap - EXIT INT TERM
-}
-
-commit_panel_transaction() {
-    PANEL_TRANSACTION=0
-    as_root rm -rf -- "$PANEL_WORK_DIR"
-    PANEL_WORK_DIR=""
-    trap - EXIT INT TERM
-}
-
-restart_meridian_and_health() {
-    is_systemd || return 1
-    as_root systemctl restart "$SERVICE_NAME" || return 1
-    wait_for_health 20
-}
-
-configure_panel_domain() {
-    local domain="$1" email="$2" work_dir port proxies config_tmp
-    validate_nginx_config_path
-    is_systemd || {
-        warn "自动面板域名配置要求 Meridian 由 systemd 管理"
-        return 1
-    }
-    valid_domain "$domain" || {
-        warn "域名无效；只能填写单个标准域名，不能含协议、路径、端口、IP 或通配符"
-        return 1
-    }
-    valid_certbot_email "$email" || { warn "证书邮箱格式无效"; return 1; }
-    if find_domain_conflict "$domain"; then
-        warn "检测到同域名的现有 Nginx 配置，拒绝覆盖: $NGINX_CONFLICT_PATH"
-        return 1
-    fi
-    if as_root test -L "$NGINX_CONFIG"; then
-        warn "拒绝覆盖符号链接形式的 Nginx 配置: $NGINX_CONFIG"
-        return 1
-    fi
-    if as_root test -e "$NGINX_CONFIG" \
-        && ! as_root grep -Fqx "$NGINX_MARKER" "$NGINX_CONFIG"; then
-        warn "Nginx 目标文件不带 Meridian 管理标记，拒绝覆盖: $NGINX_CONFIG"
-        return 1
-    fi
-
-    work_dir=$(mktemp -d)
-    chmod 0700 "$work_dir"
-    snapshot_panel_state "$work_dir" || { rm -rf -- "$work_dir"; return 1; }
-    begin_panel_transaction "$work_dir"
-    if ! install_panel_dependencies || ! start_nginx; then
-        warn "Nginx/Certbot 安装或启动失败，Meridian 服务保持可用"
-        rollback_panel_transaction
-        return 1
-    fi
-
-    port=$(read_config_port)
-    config_tmp="${work_dir}/meridian-panel.conf"
-    if ! write_panel_nginx_config "$domain" "$port" "$config_tmp" \
-        || ! as_root install -d -o root -g root -m 0755 "$(dirname -- "$NGINX_CONFIG")" \
-        || ! as_root install -o root -g root -m 0644 "$config_tmp" "${NGINX_CONFIG}.new" \
-        || ! as_root mv -f "${NGINX_CONFIG}.new" "$NGINX_CONFIG" \
-        || ! nginx_test_and_reload; then
-        warn "Nginx 配置检查失败，正在恢复原配置"
-        rollback_panel_transaction
-        return 1
-    fi
-
-    local certbot_args=(--nginx -d "$domain" --cert-name "$domain" --non-interactive --agree-tos --redirect --keep-until-expiring)
-    if [ -n "$email" ]; then
-        certbot_args+=(--email "$email")
-    else
-        certbot_args+=(--register-unsafely-without-email)
-    fi
-    if ! as_root certbot "${certbot_args[@]}" || ! nginx_test_and_reload; then
-        warn "HTTPS 证书申请或 Nginx 重载失败，正在恢复原配置"
-        rollback_panel_transaction
-        return 1
-    fi
-
-    proxies="127.0.0.1/32,::1/128"
-    if ! set_panel_env "127.0.0.1" "$domain" "$proxies" "$work_dir" \
-        || ! restart_meridian_and_health; then
-        warn "面板切换到回环地址后健康检查失败，正在恢复原配置"
-        rollback_panel_transaction
-        return 1
-    fi
-
-    commit_panel_transaction
-    ok "面板 HTTPS 已配置: https://${domain}"
-    info "反代目标固定为 127.0.0.1:${port}；未读取或修改任何播放地址和站点端口"
-    return 0
-}
-
-disable_panel_domain() {
-    local work_dir proxies
-    validate_nginx_config_path
-    is_systemd || { warn "自动取消面板域名要求 Meridian 由 systemd 管理"; return 1; }
-    work_dir=$(mktemp -d)
-    chmod 0700 "$work_dir"
-    snapshot_panel_state "$work_dir" || { rm -rf -- "$work_dir"; return 1; }
-    begin_panel_transaction "$work_dir"
-    if as_root test -f "$NGINX_CONFIG"; then
-        if ! as_root grep -Fqx "$NGINX_MARKER" "$NGINX_CONFIG"; then
-            warn "Nginx 配置没有 Meridian 管理标记，拒绝删除: $NGINX_CONFIG"
-            commit_panel_transaction
-            return 1
-        fi
-        if ! as_root rm -f -- "$NGINX_CONFIG" \
-            || { command -v nginx >/dev/null 2>&1 && ! nginx_test_and_reload; }; then
-            warn "删除面板反代后 Nginx 检查失败，正在恢复"
-            rollback_panel_transaction
-            return 1
-        fi
-    fi
-    proxies=$(remove_loopback_proxies "$(read_env_value TRUSTED_PROXY_CIDRS)")
-    if ! set_panel_env "0.0.0.0" "" "$proxies" "$work_dir" || ! restart_meridian_and_health; then
-        warn "恢复 IP 访问时健康检查失败，正在恢复原配置"
-        rollback_panel_transaction
-        return 1
-    fi
-    commit_panel_transaction
-    ok "已取消安装器管理的面板域名；可通过服务器IP:$(read_config_port)访问"
-}
-
-prompt_domain_choice() {
-    local existing_install="$1" answer
-    if [ "$DOMAIN_MODE" = "configure" ] || [ "$DOMAIN_MODE" = "disable" ]; then
-        return 0
-    fi
-    if [ "$ASSUME_YES" = "1" ]; then
-        if [ "$existing_install" = "1" ]; then
-            DOMAIN_MODE="preserve"
-        else
-            DOMAIN_MODE="disable"
-        fi
-        return 0
-    fi
-    if ask_yes_no "是否为管理面板配置域名和 HTTPS？" 0; then
-        read -r -p "请输入面板域名（不含 http://、端口或路径）: " answer
-        answer=$(normalize_domain "$answer")
-        valid_domain "$answer" || fail "域名格式无效"
-        REQUESTED_DOMAIN="$answer"
-        read -r -p "证书邮箱（可留空）: " CERTBOT_EMAIL
-        valid_certbot_email "$CERTBOT_EMAIL" || fail "证书邮箱格式无效"
-        DOMAIN_MODE="configure"
-    else
-        DOMAIN_MODE="disable"
-    fi
-}
-
-apply_domain_choice() {
-    local existing_install="$1"
-    prompt_domain_choice "$existing_install"
-    case "$DOMAIN_MODE" in
-        configure)
-            configure_panel_domain "$REQUESTED_DOMAIN" "$CERTBOT_EMAIL" \
-                || fail "面板域名配置失败；Meridian 已恢复，重新运行 install 可重试"
-            ;;
-        disable)
-            if [ "$existing_install" = "0" ] \
-                && [ -z "$(read_env_value PANEL_DOMAIN)" ] \
-                && [ "$(read_env_value PANEL_BIND_ADDR)" != "127.0.0.1" ] \
-                && ! as_root test -e "$NGINX_CONFIG"; then
-                info "未配置面板域名；面板继续通过服务器IP:$(read_config_port)访问"
-            else
-                disable_panel_domain || fail "取消面板域名失败；原配置已恢复"
-            fi
-            ;;
-        preserve)
-            info "未指定域名操作，保留现有面板域名与证书配置"
-            ;;
-        *) fail "未知域名操作模式" ;;
-    esac
-}
-
 do_install() {
     local current_binary="${INSTALL_DIR}/${BIN_NAME}" tmp_dir version
     need_cmd curl
@@ -927,10 +407,6 @@ do_install() {
 
     if [ -x "$current_binary" ]; then
         info "检测到已安装的 Meridian $(get_current_version)；install 不会执行更新"
-        tmp_dir=$(mktemp -d)
-        prepare_data_and_config "$tmp_dir"
-        rm -rf -- "$tmp_dir"
-        apply_domain_choice 1
         return 0
     fi
 
@@ -957,13 +433,8 @@ do_install() {
     fi
     rm -rf -- "$tmp_dir"
 
-    apply_domain_choice 0
     printf '\n%s\n' "Meridian ${version} 安装完成"
-    if [ -n "$(read_env_value PANEL_DOMAIN)" ]; then
-        printf '  面板地址: https://%s\n' "$(read_env_value PANEL_DOMAIN)"
-    else
-        printf '  面板地址: http://服务器IP:%s\n' "$(read_config_port)"
-    fi
+    printf '  面板地址: http://服务器IP:%s\n' "$(read_config_port)"
     printf '  数据目录: %s\n' "$DATA_DIR"
     if [ -n "$INITIAL_SETUP_TOKEN" ]; then
         printf "  ${YELLOW}首次初始化令牌（请立即保存）:${NC} ${BOLD}%s${NC}\n" "$INITIAL_SETUP_TOKEN"
@@ -1089,7 +560,7 @@ fix_database_permissions() {
     for suffix in "" "-wal" "-shm" "-journal"; do
         file="${db_path}${suffix}"
         if as_root test -e "$file"; then
-            as_root chown "$SERVICE_USER:$SERVICE_GROUP" "$file"
+            as_root chown root:"$ROOT_GROUP" "$file"
             as_root chmod 0600 "$file"
         fi
     done
@@ -1193,37 +664,10 @@ do_password() {
     ok "管理员密码已修改，所有旧登录令牌已失效"
 }
 
-remove_managed_nginx_config() {
-    local tmp_dir backup
-    validate_nginx_config_path
-    as_root test -e "$NGINX_CONFIG" || return 0
-    if as_root test -L "$NGINX_CONFIG" || ! as_root grep -Fqx "$NGINX_MARKER" "$NGINX_CONFIG"; then
-        warn "Nginx 文件不是安装器管理的普通配置，已保留: $NGINX_CONFIG"
-        return 0
-    fi
-    command -v nginx >/dev/null 2>&1 || {
-        warn "找不到 nginx，无法安全验证删除操作；配置已保留"
-        return 1
-    }
-    tmp_dir=$(mktemp -d)
-    chmod 0700 "$tmp_dir"
-    backup="${tmp_dir}/nginx.before"
-    as_root cp -p -- "$NGINX_CONFIG" "$backup"
-    as_root rm -f -- "$NGINX_CONFIG"
-    if ! nginx_test_and_reload; then
-        as_root cp -p -- "$backup" "$NGINX_CONFIG"
-        nginx_test_and_reload >/dev/null 2>&1 || true
-        as_root rm -rf -- "$tmp_dir"
-        return 1
-    fi
-    as_root rm -rf -- "$tmp_dir"
-    ok "已移除安装器管理的面板 Nginx 配置"
-}
-
 do_uninstall() {
     local remove_data="$PURGE_DATA"
     init_privilege
-    warn "即将卸载 Meridian；Nginx、Certbot、证书和备份不会删除"
+    warn "即将卸载 Meridian；备份不会删除"
     if [ "$ASSUME_YES" != "1" ]; then
         if [ "$PURGE_DATA" = "1" ]; then
             warn "已指定 --purge，数据目录将在确认卸载后删除: $DATA_DIR"
@@ -1237,7 +681,6 @@ do_uninstall() {
 
     [ "$remove_data" = "0" ] || validate_data_dir
 
-    remove_managed_nginx_config || fail "Nginx 配置无法安全移除，已中止卸载"
     if is_systemd && [ -f "$SERVICE_FILE" ]; then
         as_root systemctl stop "$SERVICE_NAME" 2>/dev/null || true
         as_root systemctl disable "$SERVICE_NAME" 2>/dev/null || true
@@ -1249,9 +692,6 @@ do_uninstall() {
 
     if [ "$remove_data" = "1" ]; then
         as_root rm -rf -- "$DATA_DIR"
-        if id "$SERVICE_USER" >/dev/null 2>&1 && command -v userdel >/dev/null 2>&1; then
-            as_root userdel "$SERVICE_USER" 2>/dev/null || true
-        fi
         ok "数据目录已删除；备份目录仍保留: $BACKUP_DIR"
     else
         info "数据目录已保留: $DATA_DIR"
@@ -1264,8 +704,8 @@ usage() {
 Meridian 一键安装工具
 
 用法:
-  install.sh install [--domain example.com] [--email EMAIL] [--no-domain] [-y]
-      首次安装最新版本；已安装时只补充或重新配置管理面板域名。
+  install.sh install [-y]
+      首次安装最新版本。
   install.sh update [-y]
       更新到最新 Release，自动备份、健康检查并在失败时回滚。
   install.sh password
@@ -1276,13 +716,11 @@ Meridian 一键安装工具
       显示本帮助。
 
 选项:
-  --domain DOMAIN  仅为管理面板配置 HTTPS 域名，固定代理到 127.0.0.1:9090（或 PORT）
-  --email EMAIL    Certbot 证书邮箱，可留空
-  --no-domain      不配置或取消安装器管理的面板域名
-  -y, --yes        非交互确认；安装未指定域名时保留现有配置，首次安装则使用 IP
-  --purge          卸载时删除数据目录；不会删除备份、Nginx、Certbot 或证书
+  -y, --yes    非交互确认
+  --purge      卸载时删除数据目录；不会删除备份
 
-不带参数运行时进入四项菜单。
+反向代理请参考 docs/nginx-site.conf 自行配置。
+不带参数运行时进入菜单。
 USAGE
 }
 
@@ -1319,35 +757,12 @@ run_cli() {
                 [ "$action" = "uninstall" ] || fail "--purge 仅用于 uninstall"
                 PURGE_DATA=1
                 ;;
-            --domain)
-                [ "$action" = "install" ] || fail "--domain 仅用于 install"
-                [ "$#" -ge 2 ] || fail "--domain 需要一个域名"
-                [ "$DOMAIN_MODE" = "ask" ] || fail "域名选项不能重复"
-                REQUESTED_DOMAIN=$(normalize_domain "$2")
-                valid_domain "$REQUESTED_DOMAIN" || fail "域名格式无效"
-                DOMAIN_MODE="configure"
-                shift
-                ;;
-            --email)
-                [ "$action" = "install" ] || fail "--email 仅用于 install"
-                [ "$#" -ge 2 ] || fail "--email 需要一个邮箱；留空时请省略该选项"
-                CERTBOT_EMAIL="$2"
-                valid_certbot_email "$CERTBOT_EMAIL" || fail "证书邮箱格式无效"
-                shift
-                ;;
-            --no-domain)
-                [ "$action" = "install" ] || fail "--no-domain 仅用于 install"
-                [ "$DOMAIN_MODE" = "ask" ] || fail "域名选项不能重复"
-                DOMAIN_MODE="disable"
-                ;;
             -h|--help) action="help" ;;
             *) fail "未知参数: $1" ;;
         esac
         shift
     done
 
-    [ -z "$CERTBOT_EMAIL" ] || [ "$DOMAIN_MODE" = "configure" ] \
-        || fail "--email 必须与 --domain 一起使用"
     case "$action" in
         install) do_install ;;
         update) do_update ;;

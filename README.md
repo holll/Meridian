@@ -95,9 +95,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/instal
 bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh) uninstall
 ```
 
-选择配置域名时，脚本会安装或复用 Nginx、Certbot（支持 apt、dnf/yum、apk、pacman），申请证书并启用 HTTP→HTTPS。生成的配置只代理管理面板 `127.0.0.1:9090`（或自定义 `PORT`），不会读取或修改站点回源、播放地址。macOS 可安装 Meridian，但不支持自动域名配置。
+更新和改密会在内部自动创建一致性备份、执行健康检查并在失败时回滚；这些内部操作不再作为公开菜单命令。备份默认保存在 `/opt/meridian-backups`，权限为 `0600`，请按敏感文件保管。卸载默认保留数据和备份；`--purge` 才删除数据。
 
-更新和改密会在内部自动创建一致性备份、执行健康检查并在失败时回滚；这些内部操作不再作为公开菜单命令。备份默认保存在 `/opt/meridian-backups`，权限为 `0600`，其中包含数据库和密钥，请按敏感文件保管。卸载默认保留数据和备份；`--purge` 才删除数据，并且不会删除 Nginx、Certbot 或证书。
+反向代理请参考 `docs/nginx-site.conf` 自行配置。
 
 ### Windows
 
@@ -375,8 +375,6 @@ go build -trimpath -buildvcs=false -o meridian .      # 编译
 3. 还原原来的 `JWT_SECRET`。
 4. 启动 Meridian。
 5. 验证管理员登录、站点配置和代理路由。
-
-如果你使用 Docker，恢复时同样要保留挂载卷里的数据库文件，并继续使用原来的 `JWT_SECRET`。
 
 ---
 
