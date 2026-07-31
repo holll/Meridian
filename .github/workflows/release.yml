@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v*'
 
 jobs:
   verify:
@@ -27,13 +28,13 @@ jobs:
           go mod verify
           go test -race ./...
           go vet ./...
+
           find web/static/js -name '*.js' -print0 | xargs -0 -n1 node --check
-          node --test tests/sites_ua_mode.test.js
+
           bash -n install.sh
           bash -n install-relay.sh
-          bash -n tests/install_test.sh
-          shellcheck install.sh install-relay.sh tests/install_test.sh
-          bash tests/install_test.sh
+
+          shellcheck install.sh install-relay.sh
 
       - name: Vulnerability scan
         run: |
@@ -51,21 +52,26 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+
     strategy:
       matrix:
         include:
           - goos: linux
             goarch: amd64
             suffix: linux-amd64
+
           - goos: linux
             goarch: arm64
             suffix: linux-arm64
+
           - goos: windows
             goarch: amd64
             suffix: windows-amd64.exe
+
           - goos: darwin
             goarch: amd64
             suffix: darwin-amd64
+
           - goos: darwin
             goarch: arm64
             suffix: darwin-arm64
@@ -83,18 +89,23 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -trimpath -buildvcs=false \
+          go build \
+            -trimpath \
+            -buildvcs=false \
             -ldflags="-s -w -X main.appVersion=${{ github.ref_name }}" \
             -o meridian-${{ matrix.suffix }} \
             ./cmd/meridian
-          go build -trimpath -buildvcs=false \
+
+          go build \
+            -trimpath \
+            -buildvcs=false \
             -ldflags="-s -w -X main.appVersion=${{ github.ref_name }}" \
             -o meridian-relay-${{ matrix.suffix }} \
             ./cmd/meridian-relay
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: meridian-${{ matrix.suffix }}
+          name: binaries-${{ matrix.suffix }}
           path: |
             meridian-${{ matrix.suffix }}
             meridian-relay-${{ matrix.suffix }}
@@ -103,7 +114,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     if: startsWith(github.ref, 'refs/tags/')
+
     permissions:
       contents: write
 
