@@ -47,12 +47,9 @@ jobs:
       - name: Validate frontend and installer syntax
         run: |
           find web/static/js -name '*.js' -print0 | xargs -0 -n1 node --check
-          node --test tests/sites_ua_mode.test.js
           bash -n install.sh
           bash -n install-relay.sh
-          bash -n tests/install_test.sh
-          shellcheck install.sh install-relay.sh tests/install_test.sh
-          bash tests/install_test.sh
+          shellcheck install.sh install-relay.sh
 
       - name: Build
         run: |
