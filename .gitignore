@@ -1,6 +1,4 @@
 # Binary
-meridian
-meridian.exe
 *.exe
 dist/
 
