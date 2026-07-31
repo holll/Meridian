@@ -19,6 +19,7 @@ type App struct {
 	SiteLifecycleMu sync.Mutex
 	SetupToken      string
 	RoutePrefix     string
+	RelayToken      string // shared secret for Relay ↔ Master API authentication
 	loginLimiter    *loginRateLimiter
 	limiterOnce     sync.Once
 	TrustedProxies  []*net.IPNet

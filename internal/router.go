@@ -44,9 +44,21 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		auth.GET("/traffic/overview", app.trafficOverview)
 		auth.GET("/traffic/:site_id", app.siteTraffic)
 
+		// Relay node status (panel view)
+		auth.GET("/relay/nodes", app.handleRelayNodes)
+
 		// Misc
 		auth.GET("/ua-profiles", app.handleUAProfiles)
 		auth.GET("/events", app.handleSSE)
+	}
+
+	// Relay API — authenticated by shared RELAY_TOKEN (not by user JWT)
+	relay := r.Group("/api/relay")
+	relay.Use(relayTokenMiddleware(app.RelayToken))
+	{
+		relay.GET("/sites", app.handleRelayGetSites)
+		relay.POST("/traffic", app.handleRelayTraffic)
+		relay.POST("/nodes/register", app.handleRelayRegister)
 	}
 
 	// Catch-all: proxy routes → embedded SPA

@@ -540,8 +540,12 @@ func (pm *ProxyManager) StartSite(site Site) error {
 		}
 	}
 
-	// Build playback hosts set from playback_target_url + stream_hosts
+	// Build playback hosts set from target + playback_target_url + stream_hosts.
+	// The main target host must be included so that cover-image and other
+	// API responses that redirect back to the Emby server are followed
+	// through the proxy rather than leaked to the client as bare 302s.
 	playbackHostsSet := make(map[string]bool)
+	playbackHostsSet[redirectHostKey(target)] = true
 	if playbackTarget != nil {
 		playbackHostsSet[redirectHostKey(playbackTarget)] = true
 	}
@@ -783,6 +787,12 @@ func (pm *ProxyManager) flushProxyTraffic(inst *ProxyInstance) {
 		return
 	}
 	log.Printf("[%s] flush traffic: in=%d out=%d", inst.Site.Name, in, out)
+	if pm.database == nil {
+		// relay mode — restore counters; caller drains via DrainTraffic
+		inst.bytesIn.Add(in)
+		inst.bytesOut.Add(out)
+		return
+	}
 	if err := pm.database.addTraffic(inst.Site.ID, in, out); err != nil {
 		inst.bytesIn.Add(in)
 		inst.bytesOut.Add(out)
@@ -792,6 +802,68 @@ func (pm *ProxyManager) flushProxyTraffic(inst *ProxyInstance) {
 	delta := in + out
 	inst.persistedTraffic.Add(delta)
 	inst.Site.TrafficUsed += delta
+}
+
+// SiteTrafficDelta holds an atomic traffic snapshot for one site.
+type SiteTrafficDelta struct {
+	SiteID   int64
+	BytesIn  int64
+	BytesOut int64
+}
+
+// DrainTraffic atomically swaps all traffic counters to zero and returns the
+// deltas. Used by relay nodes to collect traffic before reporting to Master.
+func (pm *ProxyManager) DrainTraffic() []SiteTrafficDelta {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	var deltas []SiteTrafficDelta
+	for _, inst := range pm.proxies {
+		in := inst.bytesIn.Swap(0)
+		out := inst.bytesOut.Swap(0)
+		if in == 0 && out == 0 {
+			continue
+		}
+		deltas = append(deltas, SiteTrafficDelta{
+			SiteID:   inst.Site.ID,
+			BytesIn:  in,
+			BytesOut: out,
+		})
+	}
+	return deltas
+}
+
+// ApplyConfig reconciles the proxy manager's running set against a new site
+// list. Sites that are enabled but not running are started; running sites that
+// are missing from the new list (or disabled) are stopped.
+func (pm *ProxyManager) ApplyConfig(sites []Site) {
+	desired := make(map[int64]Site, len(sites))
+	for _, s := range sites {
+		if s.Enabled {
+			desired[s.ID] = s
+		}
+	}
+
+	// Stop proxies that are no longer desired
+	pm.mu.Lock()
+	var toStop []int64
+	for id := range pm.proxies {
+		if _, ok := desired[id]; !ok {
+			toStop = append(toStop, id)
+		}
+	}
+	pm.mu.Unlock()
+	for _, id := range toStop {
+		pm.StopSite(id)
+	}
+
+	// Start proxies that are desired but not running
+	for id, s := range desired {
+		if !pm.IsRunning(id) {
+			if err := pm.StartSite(s); err != nil {
+				log.Printf("[relay] failed to start site %s: %v", s.Name, err)
+			}
+		}
+	}
 }
 
 func (pm *ProxyManager) GetRunningCount() int {

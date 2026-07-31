@@ -7,8 +7,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![SQLite](https://img.shields.io/badge/SQLite-embedded-003B57?logo=sqlite&logoColor=white)](https://pkg.go.dev/modernc.org/sqlite)
-[![CI](https://github.com/snnabb/Meridian/actions/workflows/ci.yml/badge.svg)](https://github.com/snnabb/Meridian/actions/workflows/ci.yml)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://github.com/snnabb/Meridian/pkgs/container/meridian)
+[![CI](https://github.com/holll/Meridian/actions/workflows/ci.yml/badge.svg)](https://github.com/holll/Meridian/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
@@ -53,64 +52,57 @@ Meridian 把这些事情打包成一个单二进制程序，带管理界面，�
 
 一行命令进入精简菜单：安装、更新到最新版、修改管理员密码、卸载。
 
+**Master（管理面板）：**
+
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install.sh)
 ```
 
-> 首次安装从 GitHub Releases 下载最新二进制，并使用同一 Release 中的 `SHA256SUMS` 强制校验。systemd 部署默认使用独立的 `meridian` 非 root 用户。重复运行 `install` 不会更新程序，只用于补充或重新配置面板域名。
-
-也可以直接指定四个动作：
+**Relay（流量节点）：**
 
 ```bash
-# 首次安装最新版；过程中可选择是否配置面板 HTTPS 域名
-bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh)
+```
 
-# 非交互配置面板域名（邮箱可省略）
-bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh) install \
+> 首次安装从 GitHub Releases 下载最新二进制，并使用同一 Release 中的 `SHA256SUMS` 强制校验。systemd 部署默认使用独立的非 root 用户。重复运行 `install` 不会更新程序，只用于补充或重新配置面板域名。
+
+也可以直接指定操作：
+
+```bash
+# Master：首次安装
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install.sh) install
+
+# Master：非交互配置面板域名
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install.sh) install \
   --domain panel.example.com --email admin@example.com -y
 
-# 更新：自动创建数据备份、保留上一版本、启动后健康检查，失败则自动回滚
-bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh) update
+# Master：更新（自动备份 + 健康检查 + 失败回滚）
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install.sh) update
 
-# 隐藏输入两次新密码；同时轮换 JWT_SECRET，使全部旧令牌失效
-bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh) password
+# Master：修改管理员密码（同时轮换 JWT_SECRET）
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install.sh) password
 
-# 卸载默认保留数据；只有显式添加 --purge 才删除数据
-bash <(curl -fsSL https://raw.githubusercontent.com/snnabb/Meridian/master/install.sh) uninstall
+# Master：卸载（默认保留数据，--purge 才删除）
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install.sh) uninstall
+
+# Relay：首次安装（交互输入 MASTER_URL、RELAY_TOKEN、RELAY_NAME）
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh) install
+
+# Relay：更新
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh) update
+
+# Relay：卸载
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh) uninstall
 ```
 
 选择配置域名时，脚本会安装或复用 Nginx、Certbot（支持 apt、dnf/yum、apk、pacman），申请证书并启用 HTTP→HTTPS。生成的配置只代理管理面板 `127.0.0.1:9090`（或自定义 `PORT`），不会读取或修改站点回源、播放地址。macOS 可安装 Meridian，但不支持自动域名配置。
 
 更新和改密会在内部自动创建一致性备份、执行健康检查并在失败时回滚；这些内部操作不再作为公开菜单命令。备份默认保存在 `/opt/meridian-backups`，权限为 `0600`，其中包含数据库和密钥，请按敏感文件保管。卸载默认保留数据和备份；`--purge` 才删除数据，并且不会删除 Nginx、Certbot 或证书。
 
-### Docker
-
-```bash
-docker run -d --name meridian \
-  --restart unless-stopped \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges:true \
-  --ulimit nofile=65536:65536 \
-  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
-  -p 127.0.0.1:9090:9090 \
-  -v meridian-data:/app/data \
-  -e JWT_SECRET=$(openssl rand -hex 32) \
-  ghcr.io/snnabb/meridian:latest
-```
-
-> 所有反代站点流量共享面板端口（默认 9090），通过 URL 路径前缀区分，无需映射额外端口。
->
-> 管理面板默认只映射到宿主机 `127.0.0.1:9090`，建议再通过 HTTPS 反向代理访问。如果确实需要直接通过公网 IP 访问，可改成 `-p 9090:9090`，并同时配置防火墙白名单。
->
-> 首次启动后运行 `docker logs meridian` 查看初始化令牌，再在面板中创建管理员。
->
-> 官方镜像会在推送 `v*` 标签时由 GitHub Actions 构建并推送到 GHCR。若仓库尚未发布版本，或 GHCR 中暂时没有可用镜像，请改用源码构建。
-
 ### Windows
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/snnabb/Meridian/releases/latest/download/meridian-windows-amd64.exe" -OutFile "meridian.exe"
+Invoke-WebRequest -Uri "https://github.com/holll/Meridian/releases/latest/download/meridian-windows-amd64.exe" -OutFile "meridian.exe"
 $env:JWT_SECRET = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Max 256) })
 .\meridian.exe
 ```
@@ -120,7 +112,7 @@ $env:JWT_SECRET = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Max
 ### 从源码构建
 
 ```bash
-git clone https://github.com/snnabb/Meridian.git && cd Meridian
+git clone https://github.com/holll/Meridian.git && cd Meridian
 go build -o meridian .
 JWT_SECRET=$(openssl rand -hex 32) ./meridian
 ```
@@ -155,39 +147,36 @@ unset ADMIN_PASSWORD
 | `JWT_SECRET` | 进程启动时随机生成 | 至少 32 字节的 JWT 签名密钥。**生产环境必须显式设置**，否则每次重启后会话全部失效 |
 | `SETUP_TOKEN` | 首次启动时随机生成 | 首次创建管理员所需的一次性初始化令牌；未设置时会写入启动日志 |
 | `TRUSTED_PROXY_CIDRS` | 空 | 允许提供 `X-Real-IP`/`X-Forwarded-For` 的反向代理 CIDR，多个值用逗号分隔；不要填写不受信任的客户端网段 |
+| `RELAY_TOKEN` | 空 | Relay 节点与 Master 通信的共享密钥（至少 32 字节），不设则 Relay API 禁用 |
+| `ACCESS_LOG` | 空 | 访问日志路径；未设置时不记录访问日志 |
 
-### Docker Compose
+### Relay 节点环境变量
 
-```yaml
-services:
-  meridian:
-    image: ghcr.io/snnabb/meridian:latest
-    restart: unless-stopped
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=16m
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    ports:
-      - "127.0.0.1:9090:9090"
-    volumes:
-      - meridian-data:/app/data
-    environment:
-      - JWT_SECRET=your-secret-here  # 替换为一个固定随机字符串
-
-volumes:
-  meridian-data:
-```
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `9091` | Relay 节点监听端口 |
+| `PANEL_BIND_ADDR` | `0.0.0.0` | 监听地址 |
+| `MASTER_URL` | 必填 | Master 面板地址（如 `https://panel.example.com`，不带尾部斜杠） |
+| `RELAY_TOKEN` | 必填 | 与 Master 的 `RELAY_TOKEN` 完全一致 |
+| `RELAY_NAME` | 必填 | 全局唯一节点标识（用作 Master relay_nodes 表主键） |
+| `RELAY_ISP` | 空 | 运营商标识（可选，用于面板按运营商分组展示，如 `telecom`/`unicom`/`mobile`/`hk`/`oversea`） |
 
 ---
 
-## 技术架构
+## v2 架构说明
+
+Meridian v2 引入主从架构，支持分布式流量节点部署：
+
+- **Master（管理面板）**：提供 Web 管理界面、站点配置、流量统计汇总，对外提供 Relay API
+- **Relay（流量节点）**：从 Master 拉取站点配置，在本地运行反代引擎，定期向 Master 上报流量统计
+
+**典型场景**：Master 部署在内网，Relay 节点部署在不同运营商/地区，实现多线路接入和流量分担。
+
+**v1 → v2 升级**：v1 用户可继续使用 Master 模式（无需部署 Relay），所有 v1 功能完全保留。
+
+---
+
+## 双上游配置
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -196,15 +185,19 @@ volumes:
 │  ┌─────────────────────────────────────────┐ │
 │  │          主端口（默认 9090）              │ │
 │  │                                         │ │
-│  │  /api/*   → REST API（管理面板）        │ │
-│  │  /css/*   → 静态资源                    │ │
-│  │  /js/*    → JavaScript                  │ │
-│  │  /s/xxx/* → 站点代理（path_prefix）     │ │
-│  │  其他     → SPA（catch-all）           │ │
+│  │  /api/*         → REST API（管理面板）     │ │
+│  │  /css/* /js/*   → 静态资源                │ │
+│  │  /api/relay/*   → Relay 注册 / 流量上报   │ │
+│  │  /s/xxx/*       → 本地站点代理            │ │
 │  └─────────────────────────────────────────┘ │
-│                     │                         │
+│                     ↑ RELAY_TOKEN             │
+│  ┌─────────────────────────────────────────┐ │
+│  │          Relay 节点（:9091）              │ │
+│  │  拉取站点列表 → 本地代理 → 上报流量       │ │
+│  └─────────────────────────────────────────┘ │
+│                                              │
 │  ┌──────────────────────────────────────┐     │
-│  │            SQLite (嵌入式)            │     │
+│  │            SQLite (仅 Master)         │     │
 │  └──────────────────────────────────────┘     │
 └─────────────────────────────────────────────┘
 ```
@@ -220,32 +213,41 @@ volumes:
 
 ```
 Meridian/
-├── main.go                  # 入口点、服务器启动
-├── internal/                # 核心模块包
-│   ├── auth.go              # JWT 认证、令牌管理
-│   ├── cli.go               # 命令行工具（admin、版本）
-│   ├── db.go                # SQLite 数据库层、迁移
-│   ├── diag.go              # 故障诊断（TLS、健康探针）
-│   ├── handler_auth.go      # 认证相关 API handler
-│   ├── handler_misc.go      # 仪表盘、流量、SSE handler
-│   ├── handler_site.go      # 站点 CRUD handler
-│   ├── proxy.go             # 反代引擎、WebSocket、流量计量
-│   ├── router.go            # Gin 路由注册、中间件
-│   ├── server.go            # App 状态、登录限流、静态文件服务
-│   ├── ua.go                # User-Agent 配置、Emby 授权头改写
-│   ├── permissions_*.go     # 文件权限（平台相关）
-│   └── main_test.go         # 集成测试
+├── cmd/
+│   ├── meridian/        # Master 入口
+│   └── meridian-relay/  # Relay 入口
+├── internal/            # 核心模块包
+│   ├── auth.go          # JWT 认证、令牌管理
+│   ├── cli.go           # 命令行工具（admin、版本）
+│   ├── db.go            # SQLite 数据库层、迁移
+│   ├── diag.go          # 故障诊断（TLS、健康探针）
+│   ├── handler_auth.go  # 认证相关 API handler
+│   ├── handler_misc.go  # 仪表盘、流量、SSE handler
+│   ├── handler_relay.go # Relay 节点注册 / 流量上报 handler
+│   ├── handler_site.go  # 站点 CRUD handler
+│   ├── proxy.go         # 反代引擎、WebSocket、流量计量
+│   ├── relay/           # Relay 进程逻辑（拉取配置、心跳上报）
+│   ├── router.go        # Gin 路由注册、中间件
+│   ├── server.go        # App 状态、登录限流、静态文件服务
+│   ├── ua.go            # User-Agent 配置、Emby 授权头改写
+│   ├── permissions_*.go # 文件权限（平台相关）
+│   └── main_test.go     # 集成测试
 ├── web/
-│   ├── embed.go             # Go embed 入口
+│   ├── embed.go         # Go embed 入口
 │   └── static/
-│       ├── index.html       # SPA 入口
-│       ├── css/             # 样式
-│       └── js/              # 前端逻辑（按页面拆分）
-├── Dockerfile               # 多阶段构建
+│       ├── index.html   # SPA 入口
+│       ├── css/         # 样式
+│       └── js/          # 前端逻辑（按页面拆分）
+├── docs/                # 部署参考配置
+│   ├── nginx-site.conf  # Nginx 反代示例（Master + Relay）
+│   ├── meridian.service # Master systemd 服务示例
+│   └── meridian-relay.service  # Relay systemd 服务示例
+├── install.sh           # Master 一键安装脚本
+├── install-relay.sh     # Relay 一键安装脚本
 ├── go.mod / go.sum
 └── .github/workflows/
-    ├── ci.yml               # Push / PR 校验：测试 + 编译
-    └── release.yml          # Tag 发布：多平台构建 + Docker 推送 + Release
+    ├── ci.yml           # Push / PR 校验：测试 + 编译
+    └── release.yml      # Tag 发布：多平台构建 + Release
 ```
 
 ---
@@ -327,21 +329,18 @@ go build -trimpath -buildvcs=false -o meridian .      # 编译
 
 推送 `v*` 标签时自动触发：
 - 多平台构建（linux/amd64、linux/arm64、windows/amd64、darwin/amd64、darwin/arm64）
-- 创建 GitHub Release 并上传二进制
+- 创建 GitHub Release 并上传二进制（包含 `meridian` 和 `meridian-relay`）
 - 生成并上传 `SHA256SUMS`
-- 构建并推送 Docker 镜像到 `ghcr.io`
 
 ---
 
-## V1 定位
+## Roadmap
 
-Meridian `v1` 明确定位为一个**单管理员、轻量、可直接落地**的 Emby reverse proxy management panel。
+以下功能尚未实现，列在这里作为未来方向：
 
-- 保留：登录、站点 CRUD、启停、UA 改写、流量统计、双上游、结构化诊断
-- 不做：多用户、角色权限、审计日志、Telegram / Webhook 通知
-- 目标：先把单文件 Go + 嵌入式 SPA 的简单面板体验收口，而不是提前引入更重的管理系统
-
-## 升级现有实例
+- [ ] 多用户 + 角色权限
+- [ ] 审计日志
+- [ ] Telegram / Webhook 通知
 
 升级时建议优先保持这两样东西不变：
 

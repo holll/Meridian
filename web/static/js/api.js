@@ -46,6 +46,9 @@ const API = {
   // Traffic
   getTraffic(siteId, hours) { return this.request('GET', '/api/traffic/' + siteId + '?hours=' + (hours || 24)); },
 
+  // Relay Nodes
+  getRelayNodes() { return this.request('GET', '/api/relay/nodes'); },
+
   // UA Profiles
   getProfiles() { return this.request('GET', '/api/ua-profiles'); },
 

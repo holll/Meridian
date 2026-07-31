@@ -65,20 +65,40 @@ for %%T in (%TARGETS%) do (
         set EXT=
         if "!GOOS!"=="windows" set EXT=.exe
 
+        REM --- Build Master ---
         set OUTFILE=%OUTDIR%\%APPNAME%_!GOOS!_!GOARCH!!EXT!
 
         echo ---------------------------------------------------
-        echo Building !OUTFILE!
+        echo Building Master: !OUTFILE!
         echo ---------------------------------------------------
 
         go build ^
             -o "!OUTFILE!" ^
-            -ldflags "-s -w -X main.Version=%VERSION% -X main.Commit=%COMMIT% -X main.BuildTime=%BUILDTIME%" ^
-            .
+            -ldflags "-s -w -X main.appVersion=%VERSION%" ^
+            ./cmd/meridian
 
         if errorlevel 1 (
             echo.
-            echo Build failed: !GOOS!/!GOARCH!
+            echo Master build failed: !GOOS!/!GOARCH!
+            pause
+            exit /b 1
+        )
+
+        REM --- Build Relay ---
+        set RELAYFILE=%OUTDIR%\%APPNAME%-relay_!GOOS!_!GOARCH!!EXT!
+
+        echo ---------------------------------------------------
+        echo Building Relay: !RELAYFILE!
+        echo ---------------------------------------------------
+
+        go build ^
+            -o "!RELAYFILE!" ^
+            -ldflags "-s -w -X main.appVersion=%VERSION%" ^
+            ./cmd/meridian-relay
+
+        if errorlevel 1 (
+            echo.
+            echo Relay build failed: !GOOS!/!GOARCH!
             pause
             exit /b 1
         )
@@ -88,6 +108,7 @@ for %%T in (%TARGETS%) do (
         if !errorlevel!==0 (
             echo Compressing with UPX...
             upx --best --lzma "!OUTFILE!"
+            upx --best --lzma "!RELAYFILE!"
         ) else (
             echo UPX not found, skipping compression
         )

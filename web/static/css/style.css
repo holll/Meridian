@@ -1081,7 +1081,61 @@ canvas#trafficChart { width: 100% !important; height: 280px !important; }
   .btn-modal { flex: 1; min-height: 44px; padding: 12px 16px; }
 }
 
-@media (max-width: 480px) {
-  .stats-row { grid-template-columns: 1fr; }
-  .login-brand h1 { font-size: 2rem; }
+/* ============================================================
+   Relay Nodes Page
+   ============================================================ */
+.btn-relay-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  transition: background .2s, transform .3s;
 }
+
+.btn-relay-refresh:hover { background: var(--surface-hover); }
+
+.btn-relay-refresh svg {
+  width: 16px; height: 16px;
+  stroke: var(--white-60); fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+
+.btn-relay-refresh.spinning svg {
+  animation: spin .7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.relay-loading, .relay-empty {
+  text-align: center;
+  color: var(--white-38);
+  padding: 48px;
+}
+
+.relay-ver {
+  font-size: .72rem;
+  color: var(--white-38);
+}
+
+.relay-ago {
+  font-size: .82rem;
+  color: var(--white-60);
+  font-variant-numeric: tabular-nums;
+}
+
+.relay-ago.fresh { color: var(--green); }
+.relay-ago.stale { color: var(--orange); }
+
+.pill-gray { background: rgba(255,255,255,.08); color: var(--white-60); }
+
+/* ============================================================
+   Responsive — Relay
+   ============================================================ */
+@media (max-width: 768px) {
+  .btn-relay-refresh { width: 44px; height: 44px; }
+}
+

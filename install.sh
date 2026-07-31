@@ -5,7 +5,16 @@ set -euo pipefail
 # Public operations are intentionally limited to install, update, password,
 # and uninstall. Backups and rollback remain internal safety mechanisms.
 
-REPO="${MERIDIAN_REPO:-snnabb/Meridian}"
+_detect_repo_from_git() {
+    local remote
+    remote=$(git -C "$(dirname -- "$0")" remote get-url origin 2>/dev/null || true)
+    printf '%s\n' "$remote" | sed -n 's|.*github\.com[:/]\([^/][^/]*/[^/.][^.]*\).*|\1|p' | head -1
+}
+REPO="${MERIDIAN_REPO:-}"
+if [ -z "$REPO" ]; then
+    REPO=$(_detect_repo_from_git)
+fi
+[ -n "$REPO" ] || REPO="holll/Meridian"
 INSTALL_DIR="${MERIDIAN_INSTALL_DIR:-/usr/local/bin}"
 DATA_DIR="${MERIDIAN_DATA_DIR:-/opt/meridian}"
 BACKUP_DIR="${MERIDIAN_BACKUP_DIR:-/opt/meridian-backups}"

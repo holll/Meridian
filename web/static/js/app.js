@@ -124,6 +124,7 @@
   function teardownAppRuntime() {
     stopDashboardRefresh();
     if (typeof stopDashSSE === 'function') stopDashSSE();
+    if (typeof stopRelayRefresh === 'function') stopRelayRefresh();
   }
 
   document.getElementById('loginForm').addEventListener('submit', async function(e) {
@@ -187,6 +188,7 @@
       Router.register('dashboard', renderDashboard);
       Router.register('sites', renderSites);
       Router.register('traffic', renderTraffic);
+      Router.register('relay', renderRelay);
       if (typeof renderDiag === 'function') {
         Router.register('diagnostics', renderDiag);
       } else {

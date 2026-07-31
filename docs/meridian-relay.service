@@ -1,0 +1,23 @@
+[Unit]
+Description=Meridian Relay distributed proxy node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meridian-relay
+Group=meridian-relay
+UMask=0077
+EnvironmentFile=/opt/meridian-relay/.env
+ExecStart=/usr/local/bin/meridian-relay
+WorkingDirectory=/opt/meridian-relay
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

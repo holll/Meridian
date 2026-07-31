@@ -6,7 +6,7 @@
 
 请通过以下方式私下报告：
 
-- 使用 GitHub 的 [Security Advisory](https://github.com/snnabb/Meridian/security/advisories/new) 功能
+- 使用 GitHub 的 [Security Advisory](https://github.com/holll/Meridian/security/advisories/new) 功能
 - 或发送邮件至仓库维护者（见仓库 Profile）
 
 我们会在收到报告后尽快确认并处理。
@@ -57,7 +57,7 @@
 
 - Release 附带 `SHA256SUMS`，安装脚本在替换二进制前强制校验 SHA-256
 - 更新与改密流程在修改前创建权限为 `0600` 的内部备份，并在健康检查失败时自动恢复
-- systemd 服务和官方 Docker 镜像默认以非 root 用户运行
+- systemd 服务默认以非 root 用户运行
 - CI 执行竞态测试、`go vet`、`govulncheck`、`gosec` 与 CodeQL
 
 ## 支持的版本

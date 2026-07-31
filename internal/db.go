@@ -257,6 +257,22 @@ func (d *DB) migrateOnce() error {
 		}
 	}
 
+	// Migration: add relay_nodes table
+	if _, err := conn.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS relay_nodes (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL UNIQUE,
+			isp         TEXT NOT NULL DEFAULT '',
+			public_ip   TEXT NOT NULL DEFAULT '',
+			version     TEXT NOT NULL DEFAULT '',
+			last_seen   INTEGER NOT NULL DEFAULT 0,
+			traffic_in  INTEGER NOT NULL DEFAULT 0,
+			traffic_out INTEGER NOT NULL DEFAULT 0
+		)
+	`); err != nil {
+		return err
+	}
+
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return err
 	}
@@ -615,6 +631,119 @@ func (d *DB) GetTrafficLogs(siteID int64, hours int) ([]TrafficLog, error) {
 		logs = []TrafficLog{}
 	}
 	return logs, nil
+}
+
+// RelayNode represents a registered relay node.
+type RelayNode struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	ISP        string `json:"isp"`
+	PublicIP   string `json:"public_ip"`
+	Version    string `json:"version"`
+	LastSeen   int64  `json:"last_seen"`
+	TrafficIn  int64  `json:"traffic_in"`
+	TrafficOut int64  `json:"traffic_out"`
+}
+
+// RegisterRelayNode upserts a relay node record (insert or update ip/version/last_seen).
+func (d *DB) RegisterRelayNode(name, isp, publicIP, version string, now int64) error {
+	_, err := d.DB.Exec(`
+		INSERT INTO relay_nodes (name, isp, public_ip, version, last_seen)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET
+			isp       = excluded.isp,
+			public_ip = excluded.public_ip,
+			version   = excluded.version,
+			last_seen = excluded.last_seen
+	`, name, isp, publicIP, version, now)
+	return err
+}
+
+// TouchRelayNode updates last_seen for an existing relay node.
+func (d *DB) TouchRelayNode(name string, now int64) {
+	_, _ = d.DB.Exec("UPDATE relay_nodes SET last_seen=? WHERE name=?", now, name)
+}
+
+// GetRelayNodes returns all registered relay nodes ordered by name.
+func (d *DB) GetRelayNodes() ([]RelayNode, error) {
+	rows, err := d.DB.Query("SELECT id, name, isp, public_ip, version, last_seen, traffic_in, traffic_out FROM relay_nodes ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var nodes []RelayNode
+	for rows.Next() {
+		var n RelayNode
+		if err := rows.Scan(&n.ID, &n.Name, &n.ISP, &n.PublicIP, &n.Version, &n.LastSeen, &n.TrafficIn, &n.TrafficOut); err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if nodes == nil {
+		nodes = []RelayNode{}
+	}
+	return nodes, nil
+}
+
+// AddRelayTraffic accumulates traffic from a relay node into the relay_nodes table
+// and records per-site increments in traffic_logs.
+func (d *DB) AddRelayTraffic(relayName string, now int64, sites []RelayTrafficSite) error {
+	tx, err := d.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var totalIn, totalOut int64
+	hour := time.Unix(now, 0).UTC().Truncate(time.Hour).Format("2006-01-02 15:04:05")
+	for _, s := range sites {
+		totalIn += s.BytesIn
+		totalOut += s.BytesOut
+		if _, err := tx.Exec(`
+			INSERT INTO traffic_logs (site_id, bytes_in, bytes_out, recorded_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(site_id, recorded_at) DO UPDATE SET
+				bytes_in  = traffic_logs.bytes_in  + excluded.bytes_in,
+				bytes_out = traffic_logs.bytes_out + excluded.bytes_out`,
+			s.SiteID, s.BytesIn, s.BytesOut, hour,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			"UPDATE sites SET traffic_used=traffic_used+?+?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+			s.BytesIn, s.BytesOut, s.SiteID,
+		); err != nil {
+			return err
+		}
+	}
+
+	if totalIn > 0 || totalOut > 0 {
+		if _, err := tx.Exec(`
+			UPDATE relay_nodes SET
+				traffic_in  = traffic_in  + ?,
+				traffic_out = traffic_out + ?,
+				last_seen   = ?
+			WHERE name = ?`, totalIn, totalOut, now, relayName,
+		); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec("UPDATE relay_nodes SET last_seen=? WHERE name=?", now, relayName); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// RelayTrafficSite carries per-site traffic increment from a relay report.
+type RelayTrafficSite struct {
+	SiteID   int64 `json:"id"`
+	BytesIn  int64 `json:"bytes_in"`
+	BytesOut int64 `json:"bytes_out"`
 }
 
 func (d *DB) DashboardStats() (map[string]interface{}, error) {

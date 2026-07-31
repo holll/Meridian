@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meridian — Emby 反代管理面板</title>
 <meta name="description" content="Meridian 轻量级 Emby 反向代理管理面板">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1.5.1">
-<link rel="stylesheet" href="/css/style.css?v=1.5.1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1.6.0">
+<link rel="stylesheet" href="/css/style.css?v=1.6.0">
 </head>
 <body>
 
@@ -50,6 +50,7 @@
       <a href="#dashboard" class="topnav-link active" data-page="dashboard">仪表盘</a>
       <a href="#sites" class="topnav-link" data-page="sites">站点管理</a>
       <a href="#traffic" class="topnav-link" data-page="traffic">流量统计</a>
+      <a href="#relay" class="topnav-link" data-page="relay">节点管理</a>
       <a href="#diagnostics" class="topnav-link" data-page="diagnostics">故障诊断</a>
     </div>
     <div class="topnav-right">
@@ -62,6 +63,7 @@
     <div id="page-dashboard" class="page active"></div>
     <div id="page-sites" class="page"></div>
     <div id="page-traffic" class="page"></div>
+    <div id="page-relay" class="page"></div>
     <div id="page-diagnostics" class="page"></div>
   </div>
 
@@ -79,6 +81,10 @@
       <a href="#traffic" class="mobile-tab" data-page="traffic">
         <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         流量
+      </a>
+      <a href="#relay" class="mobile-tab" data-page="relay">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        节点
       </a>
       <a href="#diagnostics" class="mobile-tab" data-page="diagnostics">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -102,13 +108,14 @@
 
 </div>
 
-<script src="/js/api.js?v=1.5.1"></script>
-<script src="/js/toast.js?v=1.5.1"></script>
-<script src="/js/router.js?v=1.5.1"></script>
-<script src="/js/pages/dashboard.js?v=1.5.1"></script>
-<script src="/js/pages/sites.js?v=1.5.1"></script>
-<script src="/js/pages/traffic.js?v=1.5.1"></script>
-<script src="/js/pages/diag.js?v=1.5.1"></script>
-<script src="/js/app.js?v=1.5.1"></script>
+<script src="/js/api.js?v=1.6.0"></script>
+<script src="/js/toast.js?v=1.6.0"></script>
+<script src="/js/router.js?v=1.6.0"></script>
+<script src="/js/pages/dashboard.js?v=1.6.0"></script>
+<script src="/js/pages/sites.js?v=1.6.0"></script>
+<script src="/js/pages/traffic.js?v=1.6.0"></script>
+<script src="/js/pages/relay.js?v=1.6.0"></script>
+<script src="/js/pages/diag.js?v=1.6.0"></script>
+<script src="/js/app.js?v=1.6.0"></script>
 </body>
 </html>

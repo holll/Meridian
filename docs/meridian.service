@@ -1,0 +1,27 @@
+[Unit]
+Description=Meridian Emby reverse proxy management panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meridian
+Group=meridian
+UMask=0077
+EnvironmentFile=/opt/meridian/.env
+ExecStart=/usr/local/bin/meridian
+WorkingDirectory=/opt/meridian
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/meridian
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
