@@ -696,12 +696,14 @@ func TestPrepareWebSocketUpstreamHeadersRebuildsForwardingHeaders(t *testing.T) 
 
 func TestRateLimitedWriterUsesPerRequestProgress(t *testing.T) {
 	var siteTraffic atomic.Int64
+	var perRequest atomic.Int64
 	siteTraffic.Store(10 << 20)
 	recorder := httptest.NewRecorder()
 	writer := &rateLimitedWriter{
 		ResponseWriter: recorder,
 		bytesPerSec:    1024,
 		written:        &siteTraffic,
+		local:          &perRequest,
 		start:          time.Now().Add(-time.Second),
 	}
 	payload := bytes.Repeat([]byte("x"), 512)
@@ -714,6 +716,9 @@ func TestRateLimitedWriterUsesPerRequestProgress(t *testing.T) {
 	}
 	if writer.requestWritten != int64(len(payload)) {
 		t.Fatalf("requestWritten = %d, want %d", writer.requestWritten, len(payload))
+	}
+	if got := perRequest.Load(); got != int64(len(payload)) {
+		t.Fatalf("per-request traffic = %d, want %d", got, len(payload))
 	}
 	if got := siteTraffic.Load(); got != (10<<20)+int64(len(payload)) {
 		t.Fatalf("site traffic = %d, want %d", got, (10<<20)+len(payload))
@@ -1206,7 +1211,9 @@ func TestCORSAllowsSameOriginAndRejectsCrossOrigin(t *testing.T) {
 
 func TestHandleAuthCheckExposesConfiguredSingleAdminMode(t *testing.T) {
 	app := newTestApp(t)
+	originalEphemeral := JWTSecretEphemeral
 	JWTSecretEphemeral = false
+	t.Cleanup(func() { JWTSecretEphemeral = originalEphemeral })
 
 	if _, err := app.DB.CreateUser("admin", "admin123"); err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -1348,6 +1355,7 @@ func TestDiagnoseSiteMarksRootReachabilityFallbackProbe(t *testing.T) {
 		t.Fatalf("health.status = %q, want online (error=%q)", result.Health.Status, result.Health.Error)
 	}
 	if result.Health.Probe.Kind != "reachability_fallback" {
+		t.Fatalf("probe.kind = %q, want reachability_fallback", result.Health.Probe.Kind)
 	}
 	if result.Health.Probe.Method != http.MethodGet {
 		t.Fatalf("probe.method = %q, want GET", result.Health.Probe.Method)
