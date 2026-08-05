@@ -240,6 +240,17 @@ function formatLatency(ms) {
   return ms + ' ms';
 }
 
+// ispZh maps an ASN org name to its Chinese operator label, keeping unknown
+// (mostly foreign) ISPs as-is. Mirrors DetectISP on the backend.
+function ispZh(org) {
+  if (!org) return '';
+  const o = org.toLowerCase();
+  if (o.includes('chinanet') || o.includes('china telecom')) return '电信';
+  if (o.includes('china unicom')) return '联通';
+  if (o.includes('china mobile')) return '移动';
+  return org;
+}
+
 // geoCell renders the geolocation/ISP attribution for one IP (from GeoLite).
 // City (with province) is preferred over country when available.
 function geoCell(geo) {
@@ -247,7 +258,7 @@ function geoCell(geo) {
   const place = geo.city
     ? [geo.city, geo.province].filter(Boolean).join(' · ')
     : [geo.country, geo.city].filter(Boolean).join(' · ');
-  const org = geo.org || '';
+  const org = ispZh(geo.org || '');
   return `<div class="geo-main">${esc(place)}</div>${org ? `<div class="geo-sub">${esc(org)}</div>` : ''}`;
 }
 
