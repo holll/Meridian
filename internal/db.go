@@ -910,6 +910,7 @@ func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, pag
 	if offset < 0 {
 		offset = 0
 	}
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
 	query := `
 		SELECT l.id, l.ts, l.relay_name, l.site_id, COALESCE(s.name, ''), l.client_ip,
 		       l.method, l.path, l.status, l.latency_ms, l.bytes_in, l.bytes_out
@@ -999,6 +1000,7 @@ type AccessLogIPAgg struct {
 // QueryAccessLogIPAggs aggregates access logs by client IP over the filters.
 func (d *DB) QueryAccessLogIPAggs(siteID int64, relayName string, from, to int64) ([]AccessLogIPAgg, error) {
 	where, args := accessLogWhere(siteID, relayName, from, to)
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
 	rows, err := d.DB.Query(`
 		SELECT l.client_ip, COUNT(*), SUM(l.bytes_out) FROM access_logs l
 		WHERE `+where+`
@@ -1037,6 +1039,7 @@ func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64)
 
 	// Hourly trend. Overall latency stats are derived from the same scan
 	// (weighted average and max over buckets) to avoid a second full pass.
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
 	rows, err := d.DB.Query(`
 		SELECT l.ts/3600*3600 AS bucket, COUNT(*), SUM(l.bytes_in), SUM(l.bytes_out),
 		       AVG(l.latency_ms), MAX(l.latency_ms)
@@ -1076,6 +1079,7 @@ func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64)
 	stats.MaxLatencyMs = maxLatency
 
 	// Status distribution
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
 	rows, err = d.DB.Query(`
 		SELECT l.status, COUNT(*) FROM access_logs l
 		WHERE `+where+`
@@ -1100,6 +1104,7 @@ func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64)
 	// Top paths: keep the top 10 and roll the rest up into a single
 	// "other" bucket so the list stays short even with many distinct paths.
 	// Bytes are outbound only (node → user), matching the other traffic columns.
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
 	rows, err = d.DB.Query(`
 		SELECT l.path, COUNT(*), SUM(l.bytes_out) FROM access_logs l
 		WHERE `+where+`
@@ -1134,6 +1139,7 @@ func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64)
 	}
 
 	// Top IPs
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
 	rows, err = d.DB.Query(`
 		SELECT l.client_ip, COUNT(*), SUM(l.bytes_out), AVG(l.latency_ms) FROM access_logs l
 		WHERE `+where+`

@@ -48,7 +48,7 @@ func OpenGeoLite(dir string) *GeoLite {
 			dir = "."
 		}
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		log.Printf("[geolite] cannot use dir %s: %v", dir, err)
 		return nil
 	}
@@ -254,7 +254,7 @@ func downloadFile(path, url string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	tmp := path + ".download"
-	f, err := os.Create(tmp)
+	f, err := os.Create(tmp) // #nosec G304 -- path is a fixed database filename under the operator-configured directory
 	if err != nil {
 		return err
 	}

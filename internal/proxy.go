@@ -24,8 +24,8 @@ type clientTransport struct {
 }
 
 func (t *clientTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.RequestURI = "" // http.Client.Do rejects non-empty RequestURI
-	return t.client.Do(req)
+	req.RequestURI = ""     // http.Client.Do rejects non-empty RequestURI
+	return t.client.Do(req) // #nosec G704 -- request target is the administrator-configured, validated upstream, never attacker input
 }
 
 type ProxyInstance struct {
