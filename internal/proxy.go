@@ -72,15 +72,21 @@ func NewProxyManager(db *DB) *ProxyManager {
 	}
 }
 
-// metered response writer
+// metered response writer. `written` feeds the shared traffic counters;
+// `local` (optional) feeds per-request access log counters and is immune to
+// the periodic DrainTraffic() reset of the shared counters.
 type meteredWriter struct {
 	http.ResponseWriter
 	written *atomic.Int64
+	local   *atomic.Int64
 }
 
 func (m *meteredWriter) Write(b []byte) (int, error) {
 	n, err := m.ResponseWriter.Write(b)
 	m.written.Add(int64(n))
+	if m.local != nil {
+		m.local.Add(int64(n))
+	}
 	return n, err
 }
 
@@ -99,15 +105,19 @@ func (m *meteredWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, fmt.Errorf("hijack not supported")
 }
 
-// metered request body reader
+// metered request body reader. Same dual-counter design as meteredWriter.
 type meteredReader struct {
 	io.ReadCloser
-	read *atomic.Int64
+	read  *atomic.Int64
+	local *atomic.Int64
 }
 
 func (m *meteredReader) Read(p []byte) (int, error) {
 	n, err := m.ReadCloser.Read(p)
 	m.read.Add(int64(n))
+	if m.local != nil {
+		m.local.Add(int64(n))
+	}
 	return n, err
 }
 
@@ -115,14 +125,22 @@ type rateLimitedWriter struct {
 	http.ResponseWriter
 	bytesPerSec    int64
 	written        *atomic.Int64
+	local          *atomic.Int64
 	requestWritten int64
 	start          time.Time
+}
+
+func (w *rateLimitedWriter) addBytes(n int) {
+	w.written.Add(int64(n))
+	if w.local != nil {
+		w.local.Add(int64(n))
+	}
 }
 
 func (w *rateLimitedWriter) Write(b []byte) (int, error) {
 	if w.bytesPerSec <= 0 {
 		n, err := w.ResponseWriter.Write(b)
-		w.written.Add(int64(n))
+		w.addBytes(n)
 		return n, err
 	}
 	totalWritten := 0
@@ -141,7 +159,7 @@ func (w *rateLimitedWriter) Write(b []byte) (int, error) {
 			chunk = b[:allowed]
 		}
 		n, err := w.ResponseWriter.Write(chunk)
-		w.written.Add(int64(n))
+		w.addBytes(n)
 		w.requestWritten += int64(n)
 		totalWritten += n
 		b = b[n:]
@@ -479,7 +497,7 @@ func prepareWebSocketUpstreamHeaders(inbound *http.Request, target *url.URL, pro
 	return header
 }
 
-func handleWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL, profile UAProfile, inst *ProxyInstance) {
+func handleWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL, profile UAProfile, inst *ProxyInstance, logIn, logOut *atomic.Int64) {
 	scheme := "ws"
 	if target.Scheme == "https" {
 		scheme = "wss"
@@ -551,15 +569,19 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL, pr
 
 	// Bidirectional copy. Wait for both directions to finish so that byte
 	// counters are complete when the caller reads them for access logging.
+	// Shared counters feed traffic reporting; log counters feed access logs
+	// and are immune to the periodic DrainTraffic() reset.
 	done := make(chan struct{}, 2)
 	go func() {
 		n, _ := io.Copy(upstreamConn, clientBuf)
 		inst.bytesIn.Add(n)
+		logIn.Add(n)
 		done <- struct{}{}
 	}()
 	go func() {
 		n, _ := io.Copy(clientConn, upstreamConn)
 		inst.bytesOut.Add(n)
+		logOut.Add(n)
 		done <- struct{}{}
 	}()
 	<-done
@@ -669,8 +691,12 @@ func (pm *ProxyManager) StartSite(site Site) error {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		inst.reqCount.Add(1)
 		start := time.Now()
-		bin0, bout0 := inst.bytesIn.Load(), inst.bytesOut.Load()
 		sw := &statusWriter{ResponseWriter: w}
+		// Per-request byte counters for access logs. Unlike the shared
+		// inst.bytesIn/bytesOut counters, these are not reset by the periodic
+		// DrainTraffic() traffic report, so long-lived requests (WebSocket
+		// playback) report their true volume.
+		var reqBytesIn, reqBytesOut atomic.Int64
 		// Prefer real client IP from trusted proxies (X-Real-IP / X-Forwarded-For);
 		// falls back to the peer address.
 		clientIP := requestClientKey(r, pm.trustedProxyNetworks())
@@ -687,8 +713,8 @@ func (pm *ProxyManager) StartSite(site Site) error {
 				Path:      r.URL.Path,
 				Status:    status,
 				LatencyMs: time.Since(start).Milliseconds(),
-				BytesIn:   inst.bytesIn.Load() - bin0,
-				BytesOut:  inst.bytesOut.Load() - bout0,
+				BytesIn:   reqBytesIn.Load(),
+				BytesOut:  reqBytesOut.Load(),
 			})
 		}()
 
@@ -709,7 +735,7 @@ func (pm *ProxyManager) StartSite(site Site) error {
 				wsTarget = target
 			}
 			log.Printf("[%s] websocket -> %s %s", site.Name, wsTarget.Host, r.URL.Path)
-			handleWebSocket(sw, r, wsTarget, profile, inst)
+			handleWebSocket(sw, r, wsTarget, profile, inst, &reqBytesIn, &reqBytesOut)
 			return
 		}
 
@@ -725,7 +751,7 @@ func (pm *ProxyManager) StartSite(site Site) error {
 		}
 
 		if r.Body != nil {
-			r.Body = &meteredReader{ReadCloser: r.Body, read: &inst.bytesIn}
+			r.Body = &meteredReader{ReadCloser: r.Body, read: &inst.bytesIn, local: &reqBytesIn}
 		}
 
 		var rw http.ResponseWriter
@@ -734,10 +760,11 @@ func (pm *ProxyManager) StartSite(site Site) error {
 				ResponseWriter: sw,
 				bytesPerSec:    speedLimitBytes,
 				written:        &inst.bytesOut,
+				local:          &reqBytesOut,
 				start:          time.Now(),
 			}
 		} else {
-			rw = &meteredWriter{ResponseWriter: sw, written: &inst.bytesOut}
+			rw = &meteredWriter{ResponseWriter: sw, written: &inst.bytesOut, local: &reqBytesOut}
 		}
 
 		// httputil.ReverseProxy panics with "net/http: abort Handler" when the
