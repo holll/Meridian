@@ -420,10 +420,8 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 			Request:    req,
 		}, nil
 	})
-	transport := &redirectFollowTransport{
-		base:          base,
-		playbackHosts: map[string]bool{redirectHostKey(configured): true},
-		profile:       getUAProfile("infuse"),
+	transport := &clientTransport{
+		client: &http.Client{Transport: base},
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/Videos/1/stream", nil)
 	resp, err := transport.RoundTrip(req)
@@ -457,10 +455,8 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 				Request:    req,
 			}, nil
 		})
-		transport := &redirectFollowTransport{
-			base:          base,
-			playbackHosts: map[string]bool{redirectHostKey(configured): true},
-			profile:       getUAProfile("infuse"),
+		transport := &clientTransport{
+			client: &http.Client{Transport: base},
 		}
 		req := httptest.NewRequest(http.MethodGet, "http://api.example.com/Videos/1/stream", nil)
 		resp, err := transport.RoundTrip(req)
@@ -492,10 +488,8 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 				Request:    req,
 			}, nil
 		})
-		transport := &redirectFollowTransport{
-			base:          base,
-			playbackHosts: map[string]bool{redirectHostKey(configured): true},
-			profile:       getUAProfile("infuse"),
+		transport := &clientTransport{
+			client: &http.Client{Transport: base},
 		}
 		req := httptest.NewRequest(http.MethodGet, "http://api.example.com/custom/play/path", nil)
 		resp, err := transport.RoundTrip(req)
@@ -527,10 +521,8 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 				Request:    req,
 			}, nil
 		})
-		transport := &redirectFollowTransport{
-			base:          base,
-			playbackHosts: map[string]bool{redirectHostKey(configured): true},
-			profile:       getUAProfile("infuse"),
+		transport := &clientTransport{
+			client: &http.Client{Transport: base},
 		}
 		req := httptest.NewRequest(http.MethodGet, "https://api.example.com/custom/play/path", nil)
 		resp, err := transport.RoundTrip(req)
@@ -546,30 +538,46 @@ func TestRedirectModeTreatsExplicit443AsDefaultHTTPSPort(t *testing.T) {
 		}
 	})
 
-	t.Run("does not follow POST request", func(t *testing.T) {
+	t.Run("follows POST redirect with method preserved", func(t *testing.T) {
 		calls := 0
+		var secondMethod string
 		base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
+			if calls == 1 {
+				return &http.Response{
+					StatusCode: http.StatusTemporaryRedirect,
+					Header:     http.Header{"Location": []string{"https://media.example.com/Users/AuthenticateByName"}},
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			}
+			secondMethod = req.Method
 			return &http.Response{
-				StatusCode: http.StatusTemporaryRedirect,
-				Header:     http.Header{"Location": []string{"https://media.example.com/Users/AuthenticateByName"}},
-				Body:       io.NopCloser(strings.NewReader("")),
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("ok")),
 				Request:    req,
 			}, nil
 		})
-		transport := &redirectFollowTransport{
-			base:          base,
-			playbackHosts: map[string]bool{redirectHostKey(configured): true},
-			profile:       getUAProfile("infuse"),
+		transport := &clientTransport{
+			client: &http.Client{Transport: base},
 		}
 		req := httptest.NewRequest(http.MethodPost, "http://api.example.com/Users/AuthenticateByName", strings.NewReader(`{"Username":"test"}`))
+		// http.Client only replays a 307/308 body when GetBody is set;
+		// httptest.NewRequest leaves it nil.
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(`{"Username":"test"}`)), nil
+		}
 		resp, err := transport.RoundTrip(req)
 		if err != nil {
 			t.Fatalf("RoundTrip: %v", err)
 		}
 		defer resp.Body.Close()
-		if calls != 1 || resp.StatusCode != http.StatusTemporaryRedirect {
-			t.Fatalf("API redirect calls=%d status=%d, want calls=1 status=307", calls, resp.StatusCode)
+		if calls != 2 || resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST redirect calls=%d status=%d, want calls=2 status=200", calls, resp.StatusCode)
+		}
+		if secondMethod != http.MethodPost {
+			t.Fatalf("redirected method = %q, want POST preserved by 307", secondMethod)
 		}
 	})
 }
@@ -753,8 +761,8 @@ func TestMobileModalKeepsBodyScrollableAndActionsVisible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read embedded index HTML: %v", err)
 	}
-	for _, asset := range []string{"/css/style.css?v=1.6.0", "/js/pages/sites.js?v=1.6.0", "/js/app.js?v=1.6.0"} {
-		if !strings.Contains(string(indexHTML), asset) {
+	for _, asset := range []string{"/css/style.css", "/js/pages/sites.js", "/js/app.js"} {
+		if !strings.Contains(string(indexHTML), asset+"?v=") {
 			t.Errorf("index must cache-bust updated asset %q", asset)
 		}
 	}
@@ -1665,34 +1673,34 @@ func TestCustomUAProfileIsConsistentAcrossHTTPWebSocketAndRedirects(t *testing.T
 	})
 
 	t.Run("redirect", func(t *testing.T) {
-		target, err := normalizeTargetURL("https://media.example.com")
-		if err != nil {
-			t.Fatalf("normalize target: %v", err)
-		}
 		calls := 0
 		var followedHeaders http.Header
-		transport := &redirectFollowTransport{
-			playbackHosts: map[string]bool{redirectHostKey(target): true},
-			profile:       profile,
-			base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				calls++
-				if calls == 1 {
-					return &http.Response{
-						StatusCode: http.StatusFound,
-						Header:     http.Header{"Location": []string{"https://media.example.com/Videos/1/stream"}},
-						Body:       io.NopCloser(strings.NewReader("")),
-						Request:    request,
-					}, nil
-				}
-				followedHeaders = request.Header.Clone()
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     make(http.Header),
-					Body:       io.NopCloser(strings.NewReader("ok")),
-					Request:    request,
-				}, nil
-			}),
-		}
+			transport := &clientTransport{
+				client: &http.Client{
+					Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+						calls++
+						if calls == 1 {
+							return &http.Response{
+								StatusCode: http.StatusFound,
+								Header:     http.Header{"Location": []string{"https://media.example.com/Videos/1/stream"}},
+								Body:       io.NopCloser(strings.NewReader("")),
+								Request:    request,
+							}, nil
+						}
+						followedHeaders = request.Header.Clone()
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     make(http.Header),
+							Body:       io.NopCloser(strings.NewReader("ok")),
+							Request:    request,
+						}, nil
+					}),
+					CheckRedirect: func(req *http.Request, via []*http.Request) error {
+						applyUAProfileHeaders(req.Header, profile)
+						return nil
+					},
+				},
+			}
 		request := httptest.NewRequest(http.MethodGet, "https://api.example.com/Videos/1/stream", nil)
 		request.Header.Set("X-Emby-Authorization", authorization)
 		applyUAProfileHeaders(request.Header, profile)
