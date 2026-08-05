@@ -204,7 +204,7 @@ const uaClassMap = { passthrough: 'pill-gray', infuse: 'pill-blue', web: 'pill-g
 const uaNameMap = { passthrough: '跟随', infuse: 'Infuse', web: 'Web', client: '客户端', custom: '自定义' };
 
 function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || !isFinite(bytes) || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + ' ' + units[i];
@@ -245,19 +245,16 @@ function formatLatency(ms) {
 function ispZh(org) {
   if (!org) return '';
   const o = org.toLowerCase();
-  if (o.includes('chinanet') || o.includes('china telecom')) return '电信';
-  if (o.includes('china unicom')) return '联通';
-  if (o.includes('china mobile')) return '移动';
+  if (o.includes('chinanet') || o.includes('china telecom')) return '中国电信';
+  if (o.includes('china unicom')) return '中国联通';
+  if (o.includes('china mobile')) return '中国移动';
   return org;
 }
 
 // geoCell renders the geolocation/ISP attribution for one IP (from GeoLite).
-// City (with province) is preferred over country when available.
 function geoCell(geo) {
   if (!geo) return '<span style="color:var(--white-38)">—</span>';
-  const place = geo.city
-    ? [geo.city, geo.province].filter(Boolean).join(' · ')
-    : [geo.country, geo.city].filter(Boolean).join(' · ');
+  const place = [geo.country, geo.city].filter(Boolean).join(' · ');
   const org = ispZh(geo.org || '');
   return `<div class="geo-main">${esc(place)}</div>${org ? `<div class="geo-sub">${esc(org)}</div>` : ''}`;
 }
