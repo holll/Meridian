@@ -151,7 +151,7 @@ unset ADMIN_PASSWORD
 | `TRUSTED_PROXY_CIDRS` | 空 | 允许提供 `X-Real-IP`/`X-Forwarded-For` 的反向代理 CIDR，多个值用逗号分隔；不要填写不受信任的客户端网段 |
 | `RELAY_TOKEN` | 空 | Relay 节点与 Master 通信的共享密钥（至少 32 字节），不设则 Relay API 禁用 |
 | `ACCESS_LOG` | 空 | 访问日志路径；未设置时不记录访问日志 |
-| `GEOLITE_DB_DIR` | 二进制同目录 | IP 归属数据库目录。启动时加载 `GeoLite2-City.mmdb` + `GeoLite2-ASN.mmdb`（自动从 `github.com/P3TERX/GeoLite.mmdb` 镜像下载）+ `ip2region.xdb`（自动从 ip2region 官方源下载，提供国内 IP 城市/省份数据）；日志/分析页展示运营商（中文）、城市、省份与归属 |
+| `GEOLITE_DB_DIR` | 二进制同目录 | IP 归属数据库目录。启动时加载 `GeoLite2-Country.mmdb` + `GeoLite2-ASN.mmdb`（自动从 `github.com/P3TERX/GeoLite.mmdb` 镜像下载）+ `ip2region.xdb`（自动从 ip2region 官方源下载，提供国内 IP 城市/省份数据）；日志/分析页展示运营商（中文）、城市、省份与归属 |
 | `GEOLITE_DISABLE` | `0` | 设为 `1` 关闭 Geo 识别（不下载不加载） |
 
 ### Relay 节点环境变量

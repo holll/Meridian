@@ -18,12 +18,12 @@ import (
 )
 
 const (
-	geoliteCityFile = "GeoLite2-City.mmdb"
-	geoliteASNFile  = "GeoLite2-ASN.mmdb"
-	geoliteXDBFile  = "ip2region.xdb"
-	geoliteCityURL  = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb"
-	geoliteASNURL   = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb"
-	geoliteXDBURL   = "https://raw.githubusercontent.com/lionsoul2014/ip2region/master/data/ip2region_v4.xdb"
+	geoliteCountryFile = "GeoLite2-Country.mmdb"
+	geoliteASNFile     = "GeoLite2-ASN.mmdb"
+	geoliteXDBFile     = "ip2region.xdb"
+	geoliteCountryURL  = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
+	geoliteASNURL      = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb"
+	geoliteXDBURL      = "https://raw.githubusercontent.com/lionsoul2014/ip2region/master/data/ip2region_v4.xdb"
 )
 
 // GeoInfo is the geolocation and ASN attribution for one IP address.
@@ -38,13 +38,13 @@ type GeoInfo struct {
 
 // GeoLite holds the loaded IP attribution databases. Nil values are safe to query.
 type GeoLite struct {
-	city  *maxminddb.Reader
-	asn   *maxminddb.Reader
-	ip2   *xdb.Searcher // ip2region for CN city coverage (MaxMind lacks it)
-	ip2mu sync.Mutex    // xdb.Searcher is not thread-safe
+	country *maxminddb.Reader
+	asn     *maxminddb.Reader
+	ip2     *xdb.Searcher // ip2region for CN province/city (MaxMind free lacks it)
+	ip2mu   sync.Mutex    // xdb.Searcher is not thread-safe
 }
 
-// OpenGeoLite loads the GeoLite2 City/ASN and ip2region databases from dir
+// OpenGeoLite loads the GeoLite2 Country/ASN and ip2region databases from dir
 // (the binary's directory when dir is empty), downloading them when missing.
 // Returns nil with a logged warning when unavailable so the panel keeps
 // working without geolocation.
@@ -60,22 +60,22 @@ func OpenGeoLite(dir string) *GeoLite {
 		log.Printf("[geolite] cannot use dir %s: %v", dir, err)
 		return nil
 	}
-	city := loadOrDownload(filepath.Join(dir, geoliteCityFile), geoliteCityURL)
+	country := loadOrDownload(filepath.Join(dir, geoliteCountryFile), geoliteCountryURL)
 	asn := loadOrDownload(filepath.Join(dir, geoliteASNFile), geoliteASNURL)
 	ip2 := loadXDB(filepath.Join(dir, geoliteXDBFile), geoliteXDBURL)
-	if city == nil && asn == nil && ip2 == nil {
+	if country == nil && asn == nil && ip2 == nil {
 		return nil
 	}
-	log.Printf("[geolite] loaded City+ASN+ip2region databases from %s", dir)
-	return &GeoLite{city: city, asn: asn, ip2: ip2}
+	log.Printf("[geolite] loaded Country+ASN+ip2region databases from %s", dir)
+	return &GeoLite{country: country, asn: asn, ip2: ip2}
 }
 
 func (g *GeoLite) Close() {
 	if g == nil {
 		return
 	}
-	if g.city != nil {
-		g.city.Close()
+	if g.country != nil {
+		g.country.Close()
 	}
 	if g.asn != nil {
 		g.asn.Close()
@@ -93,24 +93,20 @@ func (g *GeoLite) Lookup(ipStr string) *GeoInfo {
 		return nil
 	}
 	info := &GeoInfo{}
-	if g.city != nil {
+	if g.country != nil {
 		var rec struct {
 			Country struct {
 				ISOCode string            `maxminddb:"iso_code"`
 				Names   map[string]string `maxminddb:"names"`
 			} `maxminddb:"country"`
-			City struct {
-				Names map[string]string `maxminddb:"names"`
-			} `maxminddb:"city"`
 		}
-		if err := g.city.Lookup(ip, &rec); err == nil {
+		if err := g.country.Lookup(ip, &rec); err == nil {
 			info.CountryCode = rec.Country.ISOCode
 			info.Country = preferredGeoName(rec.Country.Names)
-			info.City = preferredGeoName(rec.City.Names)
 		}
 	}
-	// ip2region covers Chinese IPs with province/city data that MaxMind's free
-	// City database lacks. Region format: 国家|省份|城市|ISP.
+	// ip2region provides province/city for Chinese IPs that MaxMind's free
+	// databases lack. Region format: 国家|省份|城市|ISP.
 	if g.ip2 != nil {
 		g.ip2mu.Lock()
 		region, err := g.ip2.Search(ipStr)
