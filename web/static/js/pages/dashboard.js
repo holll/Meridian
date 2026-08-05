@@ -252,10 +252,17 @@ function ispZh(org) {
 }
 
 // geoCell renders the geolocation/ISP attribution for one IP (from GeoLite).
+// Domestic (China) traffic omits the country, showing only the ISP.
 function geoCell(geo) {
   if (!geo) return '<span style="color:var(--white-38)">—</span>';
-  const place = [geo.country, geo.city].filter(Boolean).join(' · ');
   const org = ispZh(geo.org || '');
+  const isChina = geo.country === '中国' || geo.countryCode === 'CN';
+  if (isChina) {
+    return org
+      ? `<div class="geo-main">${esc(org)}</div>`
+      : '<span style="color:var(--white-38)">中国</span>';
+  }
+  const place = [geo.country, geo.city].filter(Boolean).join(' · ');
   return `<div class="geo-main">${esc(place)}</div>${org ? `<div class="geo-sub">${esc(org)}</div>` : ''}`;
 }
 
