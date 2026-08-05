@@ -1099,8 +1099,9 @@ func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64)
 
 	// Top paths: keep the top 10 and roll the rest up into a single
 	// "other" bucket so the list stays short even with many distinct paths.
+	// Bytes are outbound only (node → user), matching the other traffic columns.
 	rows, err = d.DB.Query(`
-		SELECT l.path, COUNT(*), SUM(l.bytes_in + l.bytes_out) FROM access_logs l
+		SELECT l.path, COUNT(*), SUM(l.bytes_out) FROM access_logs l
 		WHERE `+where+`
 		GROUP BY l.path
 		ORDER BY COUNT(*) DESC`, args...)

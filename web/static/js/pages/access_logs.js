@@ -24,9 +24,9 @@ function renderAccessLogs() {
         <table>
           <thead><tr>
             <th>时间</th><th>节点</th><th>站点</th><th>客户端 IP</th><th>归属</th><th>方法</th>
-            <th>状态</th><th>路径</th><th>延迟</th><th>入站</th><th>出站</th>
+            <th>状态</th><th>路径</th><th>延迟</th><th>出站流量</th>
           </tr></thead>
-          <tbody id="alog-table"><tr><td colspan="11" class="relay-loading">加载中...</td></tr></tbody>
+          <tbody id="alog-table"><tr><td colspan="10" class="relay-loading">加载中...</td></tr></tbody>
         </table>
       </div>
       <div class="alog-pager" id="alog-pager"></div>
@@ -106,7 +106,7 @@ async function loadAccessLogs(silent) {
     }
 
     if (logs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="11" class="relay-empty">暂无访问日志。Relay 节点产生请求后日志将在此显示。</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="relay-empty">暂无访问日志。Relay 节点产生请求后日志将在此显示。</td></tr>';
       renderPager(total);
       return;
     }
@@ -122,14 +122,13 @@ async function loadAccessLogs(silent) {
         <td><span class="alog-status" style="color:${statusColor(l.status)}">${l.status}</span></td>
         <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(l.path)}">${esc(l.path)}</td>
         <td>${formatLatency(l.latency_ms)}</td>
-        <td>${formatBytes(l.bytes_in)}</td>
         <td>${formatBytes(l.bytes_out)}</td>
       </tr>
     `).join('');
     renderPager(total);
   } catch (e) {
     if (!silent) {
-      tbody.innerHTML = '<tr><td colspan="11" class="relay-empty" style="color:var(--red)">加载失败：' + esc(e.message) + '</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="relay-empty" style="color:var(--red)">加载失败：' + esc(e.message) + '</td></tr>';
     }
   }
 }
