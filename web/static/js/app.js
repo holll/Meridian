@@ -125,6 +125,7 @@
     stopDashboardRefresh();
     if (typeof stopDashSSE === 'function') stopDashSSE();
     if (typeof stopRelayRefresh === 'function') stopRelayRefresh();
+    if (typeof stopAccessLogRefresh === 'function') stopAccessLogRefresh();
   }
 
   document.getElementById('loginForm').addEventListener('submit', async function(e) {
@@ -188,6 +189,8 @@
       Router.register('dashboard', renderDashboard);
       Router.register('sites', renderSites);
       Router.register('traffic', renderTraffic);
+      Router.register('access-logs', renderAccessLogs);
+      Router.register('access-analysis', renderAccessAnalysis);
       Router.register('relay', renderRelay);
       if (typeof renderDiag === 'function') {
         Router.register('diagnostics', renderDiag);
@@ -208,17 +211,43 @@
     startDashboardRefresh();
   }
 
-  document.getElementById('avatar-btn').addEventListener('click', function() {
-    if (!confirm('确认退出登录？')) return;
+  // Mobile sidebar (drawer) — opened from the "more" tab in the bottom bar
+  const sidebarEl = document.getElementById('sidebar');
+  const sidebarOverlayEl = document.getElementById('sidebar-overlay');
 
+  function openSidebar() {
+    sidebarEl.classList.add('open');
+    sidebarOverlayEl.classList.add('active');
+    sidebarOverlayEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeSidebar() {
+    sidebarEl.classList.remove('open');
+    sidebarOverlayEl.classList.remove('active');
+    sidebarOverlayEl.setAttribute('aria-hidden', 'true');
+  }
+
+  document.getElementById('btn-sidebar-open').addEventListener('click', openSidebar);
+  document.getElementById('btn-sidebar-close').addEventListener('click', closeSidebar);
+  sidebarOverlayEl.addEventListener('click', closeSidebar);
+  document.querySelectorAll('.sidebar-link[data-page]').forEach(link => {
+    link.addEventListener('click', closeSidebar);
+  });
+
+  function logout() {
+    if (!confirm('确认退出登录？')) return;
     teardownAppRuntime();
+    closeSidebar();
     API.logout();
     loginEl.classList.remove('hidden');
     shellEl.classList.remove('active');
     showLoginMode();
     document.getElementById('inp-password').value = '';
     Toast.info('已退出登录');
-  });
+  }
+
+  document.getElementById('avatar-btn').addEventListener('click', logout);
+  document.getElementById('btn-sidebar-logout').addEventListener('click', logout);
 
   checkAuth();
 })();

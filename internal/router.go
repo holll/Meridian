@@ -43,6 +43,11 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		// Traffic
 		auth.GET("/traffic/overview", app.trafficOverview)
 		auth.GET("/traffic/:site_id", app.siteTraffic)
+		auth.GET("/traffic/:site_id/daily", app.siteDailyTraffic)
+
+		// Access logs
+		auth.GET("/access_logs", app.handleAccessLogs)
+		auth.GET("/access_logs/stats", app.handleAccessLogStats)
 
 		// Relay node status (panel view)
 		auth.GET("/relay/nodes", app.handleRelayNodes)
@@ -59,6 +64,7 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		relay.GET("/sites", app.handleRelayGetSites)
 		relay.POST("/traffic", app.handleRelayTraffic)
 		relay.POST("/nodes/register", app.handleRelayRegister)
+		relay.POST("/access_logs", app.handleRelayAccessLogs)
 	}
 
 	// Catch-all: proxy routes → embedded SPA

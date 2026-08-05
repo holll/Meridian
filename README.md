@@ -38,6 +38,8 @@ Meridian 把这些事情打包成一个单二进制程序，带管理界面，�
 | **双上游分流** | 网页/API 和播放/转码流量可分别指向不同上游 |
 | **UA 伪装** | 3 种预设（Infuse / Web / 客户端）或每站自定义身份；HTTP、WebSocket 与受限播放重定向统一改写 |
 | **流量管控** | 按站点统计流量、设置限速、设置配额 |
+| **访问日志上报** | Relay 节点逐请求记录访问日志（状态码/延迟/字节数），批量上报 Master 入库 |
+| **日志分析** | 基于访问日志的请求量趋势、状态码分布、TOP 资源/IP 排行与延迟统计 |
 | **WebSocket 代理** | 完整支持 Emby 的 WebSocket 通信 |
 | **SSE 实时推送** | 仪表盘数据通过 Server-Sent Events 实时更新 |
 | **故障诊断** | 回源健康检测、上游 TLS 证书检查、请求头预览 |
@@ -149,6 +151,8 @@ unset ADMIN_PASSWORD
 | `TRUSTED_PROXY_CIDRS` | 空 | 允许提供 `X-Real-IP`/`X-Forwarded-For` 的反向代理 CIDR，多个值用逗号分隔；不要填写不受信任的客户端网段 |
 | `RELAY_TOKEN` | 空 | Relay 节点与 Master 通信的共享密钥（至少 32 字节），不设则 Relay API 禁用 |
 | `ACCESS_LOG` | 空 | 访问日志路径；未设置时不记录访问日志 |
+| `GEOLITE_DB_DIR` | 二进制同目录 | GeoLite2 数据库目录。启动时加载 `GeoLite2-City.mmdb` + `GeoLite2-ASN.mmdb`（缺失自动从 `github.com/P3TERX/GeoLite.mmdb` 镜像下载），日志/分析页展示客户端 IP 的国家、城市与运营商 |
+| `GEOLITE_DISABLE` | `0` | 设为 `1` 关闭 Geo 识别（不下载不加载） |
 
 ### Relay 节点环境变量
 
@@ -159,24 +163,68 @@ unset ADMIN_PASSWORD
 | `MASTER_URL` | 必填 | Master 面板地址（如 `https://panel.example.com`，不带尾部斜杠） |
 | `RELAY_TOKEN` | 必填 | 与 Master 的 `RELAY_TOKEN` 完全一致 |
 | `RELAY_NAME` | 必填 | 全局唯一节点标识（用作 Master relay_nodes 表主键） |
-| `RELAY_ISP` | 空 | 运营商标识（可选，用于面板按运营商分组展示，如 `telecom`/`unicom`/`mobile`/`hk`/`oversea`） |
+| `RELAY_ISP` | 空 | 运营商标识（可选）。Master 启用 GeoLite 时根据节点公网 IP 自动识别（`telecom`/`unicom`/`mobile`/`hk`/`oversea`），可留空 |
+| `ACCESS_LOG_REPORT` | `1` | 是否将逐请求访问日志上报给 Master（`0` 关闭，压测场景可关闭以降低开销） |
+| `TRUSTED_PROXY_CIDRS` | 空 | 可信反向代理网段（逗号分隔）。Relay 部署在 Nginx/CDN 后时配置，访问日志取 `X-Real-IP`/`X-Forwarded-For` 真实客户端 IP；不配置则记录对端地址 |
 
 ---
 
-## v2 架构说明
+## 架构说明
 
 Meridian v2 引入主从架构，支持分布式流量节点部署：
 
-- **Master（管理面板）**：提供 Web 管理界面、站点配置、流量统计汇总，对外提供 Relay API
-- **Relay（流量节点）**：从 Master 拉取站点配置，在本地运行反代引擎，定期向 Master 上报流量统计
+- **Master（管理面板）**：提供 Web 管理界面、站点配置、流量统计汇总与访问日志分析，对外提供 Relay API（`cmd/meridian`，Gin + SQLite）
+- **Relay（流量节点）**：从 Master 拉取站点配置，在本地运行反代引擎，定期向 Master 上报流量与访问日志（`cmd/meridian-relay`，纯 `net/http`，**无数据库**）
 
 **典型场景**：Master 部署在内网，Relay 节点部署在不同运营商/地区，实现多线路接入和流量分担。
 
 **v1 → v2 升级**：v1 用户可继续使用 Master 模式（无需部署 Relay），所有 v1 功能完全保留。
 
+### Master ↔ Relay 通信
+
+两者通过 HTTP + JSON 通信，认证用共享 `RELAY_TOKEN`（`Authorization: Bearer <token>`，常量时间比对，见 `internal/handler_relay.go` 的 `relayTokenMiddleware`）：
+
+| Relay 接口（`/api/relay/`） | 方向 | 频率 | 说明 |
+|------|------|------|------|
+| `GET /sites` | Relay → Master | 30s | 拉取站点列表与全局 `ROUTE_PREFIX` |
+| `POST /traffic` | Relay → Master | 60s | 上报流量增量，**兼作心跳**（更新 `last_seen`） |
+| `POST /nodes/register` | Relay → Master | 启动时 | 注册节点（name/isp/version） |
+| `POST /access_logs` | Relay → Master | 30s | 批量上报逐请求访问日志（每批 ≤500 条） |
+
+Relay 侧同步器为 `internal/relay/sync.go` 的 `Syncer`：三个 ticker（sync/traffic/access log），`ctx` 取消时最终 flush；失败仅打日志不重试（下个周期自动补上）。Relay 无面板、无鉴权，仅暴露代理路由；Master 侧的请求全部走 JWT 或 RelayToken。
+
+### 访问日志管道
+
+```
+Relay 请求处理 (internal/proxy.go StartSite handler)
+  │  每请求记录：时间/站点/IP/method/path/状态码/延迟/入出字节
+  ▼
+AccessLogBuffer (internal/accesslog_buffer.go，有界 1000 条，满丢最旧)
+  │  Syncer 每 30s Drain + 批量 POST /api/relay/access_logs（ACCESS_LOG_REPORT=0 可关）
+  ▼
+Master: POST /api/relay/access_logs → AddAccessLogs (internal/db.go)
+  │  单事务批量 INSERT + 顺带清理 7 天前日志（access_logs 表）
+  ▼
+面板：GET /api/access_logs（分页明细）· GET /api/access_logs/stats（聚合分析）
+  │  访问日志页（明细/筛选/分页）· 日志分析页（趋势/状态码/TOP 排行/延迟）
+```
+
+### 数据库（仅 Master，SQLite）
+
+`internal/db.go` 的 `migrateOnce()` 自动建表/迁移，主要表：
+
+| 表 | 用途 |
+|------|------|
+| `users` | 管理员账号（bcrypt 密码） |
+| `sites` | 站点配置（path_prefix/target_url/playback_*/ua_mode/配额/限速） |
+| `traffic_logs` | 流量统计（按站点+小时 upsert） |
+| `settings` | 键值设置（迁移标记等） |
+| `relay_nodes` | Relay 节点（name 唯一、last_seen、累计流量） |
+| `access_logs` | 逐请求访问日志（7 天保留，ts/site_id/relay_name 索引；site_id 无外键，站点删除后日志保留） |
+
 ---
 
-## 双上游配置
+## 架构示意图
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -188,12 +236,14 @@ Meridian v2 引入主从架构，支持分布式流量节点部署：
 │  │  /api/*         → REST API（管理面板）     │ │
 │  │  /css/* /js/*   → 静态资源                │ │
 │  │  /api/relay/*   → Relay 注册 / 流量上报   │ │
+│  │                 / 访问日志上报            │ │
 │  │  /s/xxx/*       → 本地站点代理            │ │
 │  └─────────────────────────────────────────┘ │
 │                     ↑ RELAY_TOKEN             │
 │  ┌─────────────────────────────────────────┐ │
 │  │          Relay 节点（:9091）              │ │
-│  │  拉取站点列表 → 本地代理 → 上报流量       │ │
+│  │  拉取站点列表 → 本地代理                 │ │
+│  │  → 上报流量/访问日志                     │ │
 │  └─────────────────────────────────────────┘ │
 │                                              │
 │  ┌──────────────────────────────────────┐     │
@@ -214,19 +264,22 @@ Meridian v2 引入主从架构，支持分布式流量节点部署：
 ```
 Meridian/
 ├── cmd/
-│   ├── meridian/        # Master 入口
-│   └── meridian-relay/  # Relay 入口
+│   ├── meridian/        # Master 入口（Gin 面板 + Relay API）
+│   └── meridian-relay/  # Relay 入口（纯反代，无数据库）
 ├── internal/            # 核心模块包
+│   ├── accesslog.go     # Master 单机访问日志中间件（写文件）
+│   ├── accesslog_buffer.go # Relay 访问日志有界缓冲（上报队列）
 │   ├── auth.go          # JWT 认证、令牌管理
 │   ├── cli.go           # 命令行工具（admin、版本）
-│   ├── db.go            # SQLite 数据库层、迁移
+│   ├── db.go            # SQLite 数据层、迁移、访问日志存储与聚合
 │   ├── diag.go          # 故障诊断（TLS、健康探针）
+│   ├── handler_accesslogs.go # 访问日志接收（relay）/ 查询 / 分析 handler
 │   ├── handler_auth.go  # 认证相关 API handler
 │   ├── handler_misc.go  # 仪表盘、流量、SSE handler
-│   ├── handler_relay.go # Relay 节点注册 / 流量上报 handler
+│   ├── handler_relay.go # Relay 注册 / 流量上报 handler、Token 中间件
 │   ├── handler_site.go  # 站点 CRUD handler
-│   ├── proxy.go         # 反代引擎、WebSocket、流量计量
-│   ├── relay/           # Relay 进程逻辑（拉取配置、心跳上报）
+│   ├── proxy.go         # 反代引擎、WebSocket、流量计量、访问日志收集
+│   ├── relay/sync.go    # Relay 同步器（30s 配置 / 60s 流量 / 30s 日志）
 │   ├── router.go        # Gin 路由注册、中间件
 │   ├── server.go        # App 状态、登录限流、静态文件服务
 │   ├── ua.go            # User-Agent 配置、Emby 授权头改写
@@ -235,10 +288,12 @@ Meridian/
 ├── web/
 │   ├── embed.go         # Go embed 入口
 │   └── static/
-│       ├── index.html   # SPA 入口
+│       ├── index.html   # SPA 入口（导航含访问日志 / 日志分析）
 │       ├── css/         # 样式
 │       └── js/          # 前端逻辑（按页面拆分）
-├── docs/                # 部署参考配置
+│           └── pages/   # dashboard/sites/traffic/access_logs/access_analysis/relay/diag
+├── docs/                # 部署参考配置与示例 env
+│   ├── master.env.example / relay.env.example
 │   ├── nginx-site.conf  # Nginx 反代示例（Master + Relay）
 │   ├── meridian.service # Master systemd 服务示例
 │   └── meridian-relay.service  # Relay systemd 服务示例
@@ -378,14 +433,6 @@ go build -trimpath -buildvcs=false -o meridian .      # 编译
 
 ---
 
-## Roadmap
-
-以下功能尚未实现，列在这里作为未来方向：
-
-- [ ] 多用户 + 角色权限
-- [ ] 审计日志
-- [ ] Telegram / Webhook 通知
-
 ## 限制与注意事项
 
 - 当前只支持单管理员，不支持多用户或角色划分
@@ -399,7 +446,7 @@ go build -trimpath -buildvcs=false -o meridian .      # 编译
 ## 开发须知
 
 - 后端代码按职责拆分为 `internal/` 包：`auth`（JWT）、`db`（数据层）、`ua`（UA 改写）、`proxy`（代理引擎）、`diag`（诊断）、`router`（路由）、`server`（共享状态）、`handler_*`（API 处理器）
-- 前端使用 hash 路由（`#/dashboard`、`#/sites`、`#/diagnostics`）
+- 前端使用 hash 路由（`#dashboard`、`#sites`、`#access-logs`、`#access-analysis`），页面注册见 `web/static/js/app.js` 的 `Router.register`
 - API 认证使用 JWT Bearer Token
 - SQLite 驱动名为 `sqlite`（不是 `sqlite3`）
 - 静态资源通过 `go:embed` 嵌入二进制

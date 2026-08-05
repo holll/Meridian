@@ -27,6 +27,9 @@ const Router = {
     document.querySelectorAll('.mobile-tab').forEach(tab => {
       tab.classList.toggle('active', tab.dataset.page === hash);
     });
+    document.querySelectorAll('.sidebar-link').forEach(link => {
+      link.classList.toggle('active', link.dataset.page === hash);
+    });
 
     document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
     const target = document.getElementById('page-' + hash);

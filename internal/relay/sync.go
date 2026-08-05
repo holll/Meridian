@@ -20,18 +20,21 @@ import (
 )
 
 const (
-	syncInterval    = 30 * time.Second
-	trafficInterval = 60 * time.Second
-	httpTimeout     = 15 * time.Second
+	syncInterval          = 30 * time.Second
+	trafficInterval       = 60 * time.Second
+	accessLogInterval     = 30 * time.Second
+	maxAccessLogsPerBatch = 500
+	httpTimeout           = 15 * time.Second
 )
 
 // Config holds the static configuration for a Syncer.
 type Config struct {
-	MasterURL  string // e.g. https://panel.example.com
-	RelayToken string // shared secret (Authorization: Bearer <token>)
-	RelayName  string // unique node identifier
-	ISP        string // e.g. "telecom", "unicom", "mobile"
-	Version    string // relay binary version string
+	MasterURL        string // e.g. https://panel.example.com
+	RelayToken       string // shared secret (Authorization: Bearer <token>)
+	RelayName        string // unique node identifier
+	ISP              string // e.g. "telecom", "unicom", "mobile"
+	Version          string // relay binary version string
+	AccessLogEnabled bool   // report per-request access logs to Master
 }
 
 // Syncer manages config synchronisation and traffic reporting for one relay node.
@@ -64,7 +67,7 @@ func (s *Syncer) RoutePrefix() string {
 
 // Run starts the sync/traffic-report loops and blocks until ctx is cancelled.
 // Call Sync() once before Run() to perform the initial synchronous fetch.
-// On exit it performs a final traffic flush.
+// On exit it performs a final traffic and access log flush.
 func (s *Syncer) Run(ctx context.Context) {
 	// Register node immediately so it appears in the panel right away.
 	s.register()
@@ -73,6 +76,11 @@ func (s *Syncer) Run(ctx context.Context) {
 	trafficTicker := time.NewTicker(trafficInterval)
 	defer syncTicker.Stop()
 	defer trafficTicker.Stop()
+	var accessLogTicker *time.Ticker
+	if s.cfg.AccessLogEnabled {
+		accessLogTicker = time.NewTicker(accessLogInterval)
+		defer accessLogTicker.Stop()
+	}
 
 	for {
 		select {
@@ -80,8 +88,11 @@ func (s *Syncer) Run(ctx context.Context) {
 			s.Sync()
 		case <-trafficTicker.C:
 			s.reportTraffic()
+		case <-accessLogTicker.C:
+			s.reportAccessLogs()
 		case <-ctx.Done():
 			s.flushTraffic()
+			s.flushAccessLogs()
 			return
 		}
 	}
@@ -210,6 +221,40 @@ func (s *Syncer) reportTraffic() {
 func (s *Syncer) flushTraffic() {
 	log.Println("[relay] flushing traffic before exit...")
 	s.reportTraffic()
+}
+
+// reportAccessLogs drains pending access log entries and POSTs them to Master
+// in batches. On failure the batch is dropped — the bounded buffer and short
+// interval mean the next tick picks up where we left off.
+func (s *Syncer) reportAccessLogs() {
+	if !s.cfg.AccessLogEnabled {
+		return
+	}
+	logs := s.pm.DrainAccessLogs()
+	if len(logs) == 0 {
+		return
+	}
+	for len(logs) > 0 {
+		n := len(logs)
+		if n > maxAccessLogsPerBatch {
+			n = maxAccessLogsPerBatch
+		}
+		body := map[string]interface{}{
+			"relay_name": s.cfg.RelayName,
+			"logs":       logs[:n],
+		}
+		if err := s.post("/api/relay/access_logs", body); err != nil {
+			log.Printf("[relay] access log report failed: %v", err)
+			return
+		}
+		logs = logs[n:]
+	}
+}
+
+// flushAccessLogs is a best-effort final access log report on graceful shutdown.
+func (s *Syncer) flushAccessLogs() {
+	log.Println("[relay] flushing access logs before exit...")
+	s.reportAccessLogs()
 }
 
 // --- HTTP helpers ---

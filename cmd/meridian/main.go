@@ -120,10 +120,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid trusted proxy configuration: %v", err)
 	}
+	pm.SetTrustedProxies(trustedProxies)
 
 	relayToken := strings.TrimSpace(os.Getenv("RELAY_TOKEN"))
 	if relayToken == "" {
 		log.Printf("RELAY_TOKEN not set; relay API is disabled. Set RELAY_TOKEN to enable relay nodes.")
+	}
+
+	// GeoLite2 databases (City + ASN) next to the binary; auto-downloaded when
+	// missing. GEOLITE_DB_DIR overrides the directory, GEOLITE_DISABLE=1 skips.
+	var geolite *internal.GeoLite
+	if os.Getenv("GEOLITE_DISABLE") != "1" {
+		geolite = internal.OpenGeoLite(os.Getenv("GEOLITE_DB_DIR"))
+		defer geolite.Close()
 	}
 
 	app := &internal.App{
@@ -133,6 +142,7 @@ func main() {
 		RoutePrefix:    routePrefix,
 		RelayToken:     relayToken,
 		TrustedProxies: trustedProxies,
+		GeoLite:        geolite,
 	}
 
 	staticFS, err := fs.Sub(web.StaticFiles, "static")

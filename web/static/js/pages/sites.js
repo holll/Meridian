@@ -248,8 +248,8 @@ function showSiteModal(site) {
     document.getElementById('m-custom-client'),
     document.getElementById('m-custom-version'),
   ];
-  const initialUAState = customUAFormState(isEdit ? site.ua_mode : 'infuse', site);
-  uaSelect.value = isEdit && site.ua_mode ? site.ua_mode : 'infuse';
+  const initialUAState = customUAFormState(isEdit ? site.ua_mode : 'passthrough', site);
+  uaSelect.value = isEdit && site.ua_mode ? site.ua_mode : 'passthrough';
   customUAInputs[0].value = initialUAState.customUserAgent;
   customUAInputs[1].value = initialUAState.customClient;
   customUAInputs[2].value = initialUAState.customVersion;

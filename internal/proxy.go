@@ -19,56 +19,13 @@ import (
 	"time"
 )
 
-type redirectFollowTransport struct {
-	base          http.RoundTripper
-	playbackHosts map[string]bool
-	profile       UAProfile
+type clientTransport struct {
+	client *http.Client
 }
 
-func (t *redirectFollowTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-	if req.Method != http.MethodGet && req.Method != http.MethodHead {
-		return resp, nil
-	}
-	for i := 0; i < 3; i++ {
-		if resp.StatusCode != 301 && resp.StatusCode != 302 && resp.StatusCode != 307 && resp.StatusCode != 308 {
-			break
-		}
-		loc := resp.Header.Get("Location")
-		if loc == "" {
-			break
-		}
-		locURL, err := url.Parse(loc)
-		if err != nil {
-			break
-		}
-		locURL = req.URL.ResolveReference(locURL)
-		locURL.Scheme = strings.ToLower(locURL.Scheme)
-		if (locURL.Scheme != "http" && locURL.Scheme != "https") || !t.playbackHosts[redirectHostKey(locURL)] {
-			log.Printf("[redirect] not following %d -> %s (host not in playback list)", resp.StatusCode, loc)
-			break
-		}
-		log.Printf("[redirect] following %d -> %s", resp.StatusCode, locURL.Host)
-		resp.Body.Close()
-		newReq, err := http.NewRequestWithContext(req.Context(), req.Method, locURL.String(), nil)
-		if err != nil {
-			break
-		}
-		for k, v := range req.Header {
-			newReq.Header[k] = v
-		}
-		newReq.Host = locURL.Host
-		applyUAProfileHeaders(newReq.Header, t.profile)
-		resp, err = t.base.RoundTrip(newReq)
-		if err != nil {
-			return nil, err
-		}
-		req = newReq
-	}
-	return resp, nil
+func (t *clientTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.RequestURI = "" // http.Client.Do rejects non-empty RequestURI
+	return t.client.Do(req)
 }
 
 type ProxyInstance struct {
@@ -82,15 +39,36 @@ type ProxyInstance struct {
 }
 
 type ProxyManager struct {
-	mu       sync.RWMutex
-	proxies  map[int64]*ProxyInstance
-	database *DB
+	mu             sync.RWMutex
+	proxies        map[int64]*ProxyInstance
+	database       *DB
+	accessLogs     *AccessLogBuffer // relay mode only; nil on master
+	trustedProxies []*net.IPNet     // CIDRs allowed to supply X-Forwarded-For / X-Real-IP
+}
+
+// SetTrustedProxies configures which peer CIDRs may supply client IP headers
+// (TRUSTED_PROXY_CIDRS). Empty disables header-based client IP detection.
+func (pm *ProxyManager) SetTrustedProxies(networks []*net.IPNet) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.trustedProxies = networks
+}
+
+func (pm *ProxyManager) trustedProxyNetworks() []*net.IPNet {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.trustedProxies
 }
 
 func NewProxyManager(db *DB) *ProxyManager {
+	var logs *AccessLogBuffer
+	if db == nil { // relay mode — collect access logs for reporting to master
+		logs = NewAccessLogBuffer(1000)
+	}
 	return &ProxyManager{
-		proxies:  make(map[int64]*ProxyInstance),
-		database: db,
+		proxies:    make(map[int64]*ProxyInstance),
+		database:   db,
+		accessLogs: logs,
 	}
 }
 
@@ -188,6 +166,65 @@ func (w *rateLimitedWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return h.Hijack()
 	}
 	return nil, nil, fmt.Errorf("hijack not supported")
+}
+
+// statusWriter records the HTTP status code written to the client. Used to
+// capture the response status for access logging.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusWriter) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusWriter) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+func (s *statusWriter) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("hijack not supported")
+}
+
+// skipLogPaths lists path prefixes that should not be access-logged
+// (health checks and similar long-lived or noisy endpoints).
+var skipLogPaths = []string{"/healthz"}
+
+// logAccess records one access log entry unless the path is on the skip list.
+func (pm *ProxyManager) logAccess(e AccessLogEntry) {
+	if pm.accessLogs == nil {
+		return
+	}
+	for _, skip := range skipLogPaths {
+		if strings.HasPrefix(e.Path, skip) {
+			return
+		}
+	}
+	pm.accessLogs.Append(e)
+}
+
+// DrainAccessLogs atomically takes all pending access log entries.
+func (pm *ProxyManager) DrainAccessLogs() []AccessLogEntry {
+	if pm.accessLogs == nil {
+		return nil
+	}
+	return pm.accessLogs.Drain()
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {
@@ -512,7 +549,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL, pr
 
 	log.Printf("[WS] tunnel established: client <-> %s", target.Host)
 
-	// Bidirectional copy
+	// Bidirectional copy. Wait for both directions to finish so that byte
+	// counters are complete when the caller reads them for access logging.
 	done := make(chan struct{}, 2)
 	go func() {
 		n, _ := io.Copy(upstreamConn, clientBuf)
@@ -524,6 +562,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL, pr
 		inst.bytesOut.Add(n)
 		done <- struct{}{}
 	}()
+	<-done
 	<-done
 }
 
@@ -589,6 +628,11 @@ func (pm *ProxyManager) StartSite(site Site) error {
 	proxy := &httputil.ReverseProxy{
 		Transport: proxyTransport,
 		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			// The inbound request carries the raw request-line URI (RequestURI),
+			// which is preserved by Clone. Clear it so transports rebuild the
+			// request line from the rewritten URL: http.Transport would otherwise
+			// send the stale URI, and http.Client.Do rejects non-empty RequestURI.
+			proxyReq.Out.RequestURI = ""
 			var upstream *url.URL
 			if isRedirectMode {
 				upstream = target
@@ -608,10 +652,14 @@ func (pm *ProxyManager) StartSite(site Site) error {
 	}
 
 	if isRedirectMode {
-		proxy.Transport = &redirectFollowTransport{
-			base:          proxyTransport,
-			playbackHosts: playbackHostsSet,
-			profile:       profile,
+		proxy.Transport = &clientTransport{
+			client: &http.Client{
+				Transport: proxyTransport,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					applyUAProfileHeaders(req.Header, profile)
+					return nil
+				},
+			},
 		}
 	}
 
@@ -620,14 +668,37 @@ func (pm *ProxyManager) StartSite(site Site) error {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		inst.reqCount.Add(1)
+		start := time.Now()
+		bin0, bout0 := inst.bytesIn.Load(), inst.bytesOut.Load()
+		sw := &statusWriter{ResponseWriter: w}
+		// Prefer real client IP from trusted proxies (X-Real-IP / X-Forwarded-For);
+		// falls back to the peer address.
+		clientIP := requestClientKey(r, pm.trustedProxyNetworks())
+		defer func() {
+			status := sw.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			pm.logAccess(AccessLogEntry{
+				Timestamp: time.Now().Unix(),
+				SiteID:    site.ID,
+				ClientIP:  clientIP,
+				Method:    r.Method,
+				Path:      r.URL.Path,
+				Status:    status,
+				LatencyMs: time.Since(start).Milliseconds(),
+				BytesIn:   inst.bytesIn.Load() - bin0,
+				BytesOut:  inst.bytesOut.Load() - bout0,
+			})
+		}()
 
 		if site.TrafficQuota > 0 {
 			currentUsed := inst.persistedTraffic.Load() + inst.bytesIn.Load() + inst.bytesOut.Load()
 			if currentUsed >= site.TrafficQuota {
 				log.Printf("[%s] quota exceeded (%d/%d bytes), rejecting %s", site.Name, currentUsed, site.TrafficQuota, r.URL.Path)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(`{"error":"traffic quota exceeded"}`))
+				sw.Header().Set("Content-Type", "application/json")
+				sw.WriteHeader(http.StatusForbidden)
+				sw.Write([]byte(`{"error":"traffic quota exceeded"}`))
 				return
 			}
 		}
@@ -638,7 +709,7 @@ func (pm *ProxyManager) StartSite(site Site) error {
 				wsTarget = target
 			}
 			log.Printf("[%s] websocket -> %s %s", site.Name, wsTarget.Host, r.URL.Path)
-			handleWebSocket(w, r, wsTarget, profile, inst)
+			handleWebSocket(sw, r, wsTarget, profile, inst)
 			return
 		}
 
@@ -660,13 +731,13 @@ func (pm *ProxyManager) StartSite(site Site) error {
 		var rw http.ResponseWriter
 		if speedLimitBytes > 0 {
 			rw = &rateLimitedWriter{
-				ResponseWriter: w,
+				ResponseWriter: sw,
 				bytesPerSec:    speedLimitBytes,
 				written:        &inst.bytesOut,
 				start:          time.Now(),
 			}
 		} else {
-			rw = &meteredWriter{ResponseWriter: w, written: &inst.bytesOut}
+			rw = &meteredWriter{ResponseWriter: sw, written: &inst.bytesOut}
 		}
 
 		// httputil.ReverseProxy panics with "net/http: abort Handler" when the

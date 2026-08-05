@@ -273,6 +273,29 @@ func (d *DB) migrateOnce() error {
 		return err
 	}
 
+	// Migration: add access_logs table (per-request logs reported by relay nodes).
+	// site_id intentionally has no foreign key so audit logs survive site deletion.
+	if _, err := conn.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS access_logs (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			relay_name TEXT NOT NULL DEFAULT '',
+			site_id    INTEGER NOT NULL DEFAULT 0,
+			client_ip  TEXT NOT NULL DEFAULT '',
+			method     TEXT NOT NULL DEFAULT '',
+			path       TEXT NOT NULL DEFAULT '',
+			status     INTEGER NOT NULL DEFAULT 0,
+			latency_ms INTEGER NOT NULL DEFAULT 0,
+			bytes_in   INTEGER NOT NULL DEFAULT 0,
+			bytes_out  INTEGER NOT NULL DEFAULT 0,
+			ts         INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_access_logs_ts      ON access_logs(ts);
+		CREATE INDEX IF NOT EXISTS idx_access_logs_site_ts ON access_logs(site_id, ts);
+		CREATE INDEX IF NOT EXISTS idx_access_logs_relay    ON access_logs(relay_name, ts);
+	`); err != nil {
+		return err
+	}
+
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return err
 	}
@@ -633,6 +656,42 @@ func (d *DB) GetTrafficLogs(siteID int64, hours int) ([]TrafficLog, error) {
 	return logs, nil
 }
 
+// DailyTrafficLog holds aggregated traffic for a single calendar day.
+type DailyTrafficLog struct {
+	Date     string `json:"date"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}
+
+func (d *DB) GetDailyTrafficLogs(siteID int64, days int) ([]DailyTrafficLog, error) {
+	since := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	rows, err := d.DB.Query(
+		`SELECT DATE(recorded_at) AS day, SUM(bytes_in), SUM(bytes_out)
+		 FROM traffic_logs WHERE site_id=? AND DATE(recorded_at)>=?
+		 GROUP BY day ORDER BY day`,
+		siteID, since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var logs []DailyTrafficLog
+	for rows.Next() {
+		var l DailyTrafficLog
+		if err := rows.Scan(&l.Date, &l.BytesIn, &l.BytesOut); err != nil {
+			return nil, err
+		}
+		logs = append(logs, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if logs == nil {
+		logs = []DailyTrafficLog{}
+	}
+	return logs, nil
+}
+
 // RelayNode represents a registered relay node.
 type RelayNode struct {
 	ID         int64  `json:"id"`
@@ -662,6 +721,18 @@ func (d *DB) RegisterRelayNode(name, isp, publicIP, version string, now int64) e
 // TouchRelayNode updates last_seen for an existing relay node.
 func (d *DB) TouchRelayNode(name string, now int64) {
 	_, _ = d.DB.Exec("UPDATE relay_nodes SET last_seen=? WHERE name=?", now, name)
+}
+
+// UpdateRelayNodeIP refreshes the public IP the Master observes for a relay node.
+func (d *DB) UpdateRelayNodeIP(name, ip string) error {
+	_, err := d.DB.Exec("UPDATE relay_nodes SET public_ip=? WHERE name=?", ip, name)
+	return err
+}
+
+// UpdateRelayNodeISP refreshes the auto-detected operator label for a relay node.
+func (d *DB) UpdateRelayNodeISP(name, isp string) error {
+	_, err := d.DB.Exec("UPDATE relay_nodes SET isp=? WHERE name=?", isp, name)
+	return err
 }
 
 // GetRelayNodes returns all registered relay nodes ordered by name.
@@ -744,6 +815,351 @@ type RelayTrafficSite struct {
 	SiteID   int64 `json:"id"`
 	BytesIn  int64 `json:"bytes_in"`
 	BytesOut int64 `json:"bytes_out"`
+}
+
+// accessLogRetention is how long per-request access logs are kept on the Master.
+const accessLogRetention = 7 * 24 * time.Hour
+
+// AddAccessLogs bulk-inserts access log entries reported by a relay node and
+// prunes entries older than the retention window (same transaction).
+func (d *DB) AddAccessLogs(relayName string, logs []AccessLogEntry) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	tx, err := d.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO access_logs (relay_name, site_id, client_ip, method, path, status, latency_ms, bytes_in, bytes_out, ts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, l := range logs {
+		if _, err := stmt.Exec(relayName, l.SiteID, l.ClientIP, l.Method, l.Path, l.Status, l.LatencyMs, l.BytesIn, l.BytesOut, l.Timestamp); err != nil {
+			return err
+		}
+	}
+
+	cutoff := time.Now().Add(-accessLogRetention).Unix()
+	if _, err := tx.Exec("DELETE FROM access_logs WHERE ts < ?", cutoff); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// AccessLogRow is one access log record joined with its site name.
+type AccessLogRow struct {
+	ID        int64    `json:"id"`
+	Timestamp int64    `json:"timestamp"`
+	RelayName string   `json:"relay_name"`
+	SiteID    int64    `json:"site_id"`
+	SiteName  string   `json:"site_name"`
+	ClientIP  string   `json:"client_ip"`
+	Method    string   `json:"method"`
+	Path      string   `json:"path"`
+	Status    int      `json:"status"`
+	LatencyMs int64    `json:"latency_ms"`
+	BytesIn   int64    `json:"bytes_in"`
+	BytesOut  int64    `json:"bytes_out"`
+	Geo       *GeoInfo `json:"geo,omitempty"` // filled by handler, not from SQL
+}
+
+// accessLogWhere builds the shared WHERE clause for access_logs queries.
+// Columns are qualified with the table alias "l".
+func accessLogWhere(siteID int64, relayName string, from, to int64) (string, []interface{}) {
+	where := "1=1"
+	var args []interface{}
+	if siteID > 0 {
+		where += " AND l.site_id = ?"
+		args = append(args, siteID)
+	}
+	if relayName != "" {
+		where += " AND l.relay_name = ?"
+		args = append(args, relayName)
+	}
+	if from > 0 {
+		where += " AND l.ts >= ?"
+		args = append(args, from)
+	}
+	if to > 0 {
+		where += " AND l.ts <= ?"
+		args = append(args, to)
+	}
+	return where, args
+}
+
+// QueryAccessLogs returns a page of access logs matching the given filters
+// (siteID/relayName may be 0/"" for "any"), ordered newest first, plus the
+// total count for pagination.
+func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, page, pageSize int) ([]AccessLogRow, int64, error) {
+	where, args := accessLogWhere(siteID, relayName, from, to)
+
+	var total int64
+	if err := d.DB.QueryRow("SELECT COUNT(*) FROM access_logs l WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	if offset < 0 {
+		offset = 0
+	}
+	query := `
+		SELECT l.id, l.ts, l.relay_name, l.site_id, COALESCE(s.name, ''), l.client_ip,
+		       l.method, l.path, l.status, l.latency_ms, l.bytes_in, l.bytes_out
+		FROM access_logs l
+		LEFT JOIN sites s ON s.id = l.site_id
+		WHERE ` + where + `
+		ORDER BY l.id DESC
+		LIMIT ? OFFSET ?`
+	args = append(args, pageSize, offset)
+	rows, err := d.DB.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var logs []AccessLogRow
+	for rows.Next() {
+		var l AccessLogRow
+		if err := rows.Scan(&l.ID, &l.Timestamp, &l.RelayName, &l.SiteID, &l.SiteName, &l.ClientIP,
+			&l.Method, &l.Path, &l.Status, &l.LatencyMs, &l.BytesIn, &l.BytesOut); err != nil {
+			return nil, 0, err
+		}
+		logs = append(logs, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if logs == nil {
+		logs = []AccessLogRow{}
+	}
+	return logs, total, nil
+}
+
+// TrendPoint is one hourly bucket of access log aggregation.
+type TrendPoint struct {
+	Bucket       int64 `json:"bucket"`
+	Requests     int64 `json:"requests"`
+	BytesIn      int64 `json:"bytes_in"`
+	BytesOut     int64 `json:"bytes_out"`
+	AvgLatencyMs int64 `json:"avg_latency_ms"`
+}
+
+// StatusCount is the request count for one HTTP status code.
+type StatusCount struct {
+	Status int   `json:"status"`
+	Count  int64 `json:"count"`
+}
+
+// TopPath is one top requested path aggregation.
+type TopPath struct {
+	Path    string `json:"path"`
+	Count   int64  `json:"count"`
+	Bytes   int64  `json:"bytes"`
+	IsOther bool   `json:"is_other,omitempty"` // rollup of all remaining paths
+}
+
+// topPathCount is how many individual paths are shown before the "other" rollup.
+const topPathCount = 10
+
+// TopIP is one top client IP aggregation.
+type TopIP struct {
+	IP           string   `json:"ip"`
+	Count        int64    `json:"count"`
+	Bytes        int64    `json:"bytes"`
+	AvgLatencyMs int64    `json:"avg_latency_ms"`
+	Geo          *GeoInfo `json:"geo,omitempty"` // filled by handler
+}
+
+// AccessLogStats holds all aggregations for the access log analysis page.
+type AccessLogStats struct {
+	Trend        []TrendPoint  `json:"trend"`
+	Status       []StatusCount `json:"status"`
+	TopPaths     []TopPath     `json:"top_paths"`
+	TopIPs       []TopIP       `json:"top_ips"`
+	Countries    []GeoAgg      `json:"countries"` // filled by handler from GeoLite
+	Orgs         []GeoAgg      `json:"orgs"`      // filled by handler from GeoLite
+	AvgLatencyMs int64         `json:"avg_latency_ms"`
+	MaxLatencyMs int64         `json:"max_latency_ms"`
+}
+
+// AccessLogIPAgg is the per-client-IP aggregation feeding geo dimension rollups.
+type AccessLogIPAgg struct {
+	IP       string
+	Count    int64
+	BytesOut int64
+}
+
+// QueryAccessLogIPAggs aggregates access logs by client IP over the filters.
+func (d *DB) QueryAccessLogIPAggs(siteID int64, relayName string, from, to int64) ([]AccessLogIPAgg, error) {
+	where, args := accessLogWhere(siteID, relayName, from, to)
+	rows, err := d.DB.Query(`
+		SELECT l.client_ip, COUNT(*), SUM(l.bytes_out) FROM access_logs l
+		WHERE `+where+`
+		GROUP BY l.client_ip`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var aggs []AccessLogIPAgg
+	for rows.Next() {
+		var a AccessLogIPAgg
+		if err := rows.Scan(&a.IP, &a.Count, &a.BytesOut); err != nil {
+			return nil, err
+		}
+		aggs = append(aggs, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if aggs == nil {
+		aggs = []AccessLogIPAgg{}
+	}
+	return aggs, nil
+}
+
+// QueryAccessLogStats aggregates access logs over the given filters.
+func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64) (*AccessLogStats, error) {
+	where, args := accessLogWhere(siteID, relayName, from, to)
+
+	stats := &AccessLogStats{
+		Trend:    []TrendPoint{},
+		Status:   []StatusCount{},
+		TopPaths: []TopPath{},
+		TopIPs:   []TopIP{},
+	}
+
+	// Hourly trend. Overall latency stats are derived from the same scan
+	// (weighted average and max over buckets) to avoid a second full pass.
+	rows, err := d.DB.Query(`
+		SELECT l.ts/3600*3600 AS bucket, COUNT(*), SUM(l.bytes_in), SUM(l.bytes_out),
+		       AVG(l.latency_ms), MAX(l.latency_ms)
+		FROM access_logs l
+		WHERE `+where+`
+		GROUP BY bucket
+		ORDER BY bucket`, args...)
+	if err != nil {
+		return nil, err
+	}
+	var totalCount, latencySum, maxLatency int64
+	for rows.Next() {
+		var t TrendPoint
+		var avg *float64
+		var bucketMax *int64
+		if err := rows.Scan(&t.Bucket, &t.Requests, &t.BytesIn, &t.BytesOut, &avg, &bucketMax); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if avg != nil {
+			t.AvgLatencyMs = int64(*avg)
+		}
+		if bucketMax != nil && *bucketMax > maxLatency {
+			maxLatency = *bucketMax
+		}
+		totalCount += t.Requests
+		latencySum += t.AvgLatencyMs * t.Requests
+		stats.Trend = append(stats.Trend, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if totalCount > 0 {
+		stats.AvgLatencyMs = latencySum / totalCount
+	}
+	stats.MaxLatencyMs = maxLatency
+
+	// Status distribution
+	rows, err = d.DB.Query(`
+		SELECT l.status, COUNT(*) FROM access_logs l
+		WHERE `+where+`
+		GROUP BY l.status
+		ORDER BY COUNT(*) DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var s StatusCount
+		if err := rows.Scan(&s.Status, &s.Count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stats.Status = append(stats.Status, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Top paths: keep the top 10 and roll the rest up into a single
+	// "other" bucket so the list stays short even with many distinct paths.
+	rows, err = d.DB.Query(`
+		SELECT l.path, COUNT(*), SUM(l.bytes_in + l.bytes_out) FROM access_logs l
+		WHERE `+where+`
+		GROUP BY l.path
+		ORDER BY COUNT(*) DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	var allPaths []TopPath
+	for rows.Next() {
+		var p TopPath
+		if err := rows.Scan(&p.Path, &p.Count, &p.Bytes); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		allPaths = append(allPaths, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(allPaths) > topPathCount {
+		var otherCount, otherBytes int64
+		for _, p := range allPaths[topPathCount:] {
+			otherCount += p.Count
+			otherBytes += p.Bytes
+		}
+		stats.TopPaths = allPaths[:topPathCount]
+		stats.TopPaths = append(stats.TopPaths, TopPath{Path: "其他", Count: otherCount, Bytes: otherBytes, IsOther: true})
+	} else {
+		stats.TopPaths = allPaths
+	}
+
+	// Top IPs
+	rows, err = d.DB.Query(`
+		SELECT l.client_ip, COUNT(*), SUM(l.bytes_out), AVG(l.latency_ms) FROM access_logs l
+		WHERE `+where+`
+		GROUP BY l.client_ip
+		ORDER BY COUNT(*) DESC
+		LIMIT 20`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var ip TopIP
+		var avg *float64
+		if err := rows.Scan(&ip.IP, &ip.Count, &ip.Bytes, &avg); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if avg != nil {
+			ip.AvgLatencyMs = int64(*avg)
+		}
+		stats.TopIPs = append(stats.TopIPs, ip)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return stats, nil
 }
 
 func (d *DB) DashboardStats() (map[string]interface{}, error) {

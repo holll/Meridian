@@ -105,9 +105,9 @@ func (a *App) handleRelayGetSites(c *gin.Context) {
 
 // relayTrafficRequest is the body of POST /api/relay/traffic.
 type relayTrafficRequest struct {
-	RelayName string                 `json:"relay_name"`
-	Timestamp int64                  `json:"timestamp"`
-	Sites     []RelayTrafficSite     `json:"sites"`
+	RelayName string             `json:"relay_name"`
+	Timestamp int64              `json:"timestamp"`
+	Sites     []RelayTrafficSite `json:"sites"`
 }
 
 // handleRelayTraffic receives per-site traffic increments from a relay node.
@@ -128,6 +128,16 @@ func (a *App) handleRelayTraffic(c *gin.Context) {
 	if err := a.DB.AddRelayTraffic(req.RelayName, req.Timestamp, req.Sites); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record traffic"})
 		return
+	}
+	// Refresh the observed public IP (and auto-detected operator) on every
+	// heartbeat so they stay current.
+	if ip := requestClientKey(c.Request, a.TrustedProxies); ip != "unknown" {
+		_ = a.DB.UpdateRelayNodeIP(req.RelayName, ip)
+		if a.GeoLite != nil {
+			if isp := DetectISP(a.GeoLite.Lookup(ip)); isp != "" {
+				_ = a.DB.UpdateRelayNodeISP(req.RelayName, isp)
+			}
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -152,8 +162,22 @@ func (a *App) handleRelayRegister(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return
 	}
+	// Prefer the address the Master observes for the connection (through
+	// trusted proxies when configured); fall back to a self-reported IP.
+	publicIP := requestClientKey(c.Request, a.TrustedProxies)
+	if publicIP == "unknown" && req.PublicIP != "" {
+		publicIP = req.PublicIP
+	}
+	// Operator is auto-detected from GeoLite when available; the relay-supplied
+	// value is only a fallback.
+	isp := req.ISP
+	if a.GeoLite != nil && publicIP != "unknown" {
+		if detected := DetectISP(a.GeoLite.Lookup(publicIP)); detected != "" {
+			isp = detected
+		}
+	}
 	now := time.Now().Unix()
-	if err := a.DB.RegisterRelayNode(req.Name, req.ISP, req.PublicIP, req.Version, now); err != nil {
+	if err := a.DB.RegisterRelayNode(req.Name, isp, publicIP, req.Version, now); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register node"})
 		return
 	}

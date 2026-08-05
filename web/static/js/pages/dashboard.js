@@ -219,3 +219,46 @@ function esc(str) {
     "'": '&#39;',
   })[char]);
 }
+
+// Shared helpers for the access log pages (loaded before them in index.html).
+
+function formatLogTime(ts) {
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function statusColor(code) {
+  if (code >= 500) return '#ff6b6b';
+  if (code >= 400) return '#ffa94d';
+  if (code >= 300) return '#64d2ff';
+  return '#51cf66';
+}
+
+function formatLatency(ms) {
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
+  return ms + ' ms';
+}
+
+// geoCell renders the geolocation/ISP attribution for one IP (from GeoLite).
+function geoCell(geo) {
+  if (!geo) return '<span style="color:var(--white-38)">—</span>';
+  const place = [geo.country, geo.city].filter(Boolean).join(' · ');
+  const org = geo.org || '';
+  return `<div class="geo-main">${esc(place)}</div>${org ? `<div class="geo-sub">${esc(org)}</div>` : ''}`;
+}
+
+async function loadLogFilterSelects(siteSelId, nodeSelId) {
+  const [sites, relayData] = await Promise.all([API.listSites(), API.getRelayNodes()]);
+  const nodes = relayData.nodes || [];
+  const siteSel = document.getElementById(siteSelId);
+  const nodeSel = document.getElementById(nodeSelId);
+  if (sites && sites.length) {
+    siteSel.innerHTML = '<option value="">全部站点</option>' +
+      sites.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  }
+  if (nodes.length) {
+    nodeSel.innerHTML = '<option value="">全部节点</option>' +
+      nodes.map(n => `<option value="${esc(n.name)}">${esc(n.name)}</option>`).join('');
+  }
+}

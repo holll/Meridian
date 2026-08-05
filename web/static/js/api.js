@@ -1,4 +1,13 @@
 // Meridian API Client
+function qs(params) {
+  const parts = [];
+  for (const k in params) {
+    if (params[k] === undefined || params[k] === null || params[k] === '') continue;
+    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+  }
+  return parts.join('&');
+}
+
 const API = {
   get token() { return localStorage.getItem('meridian_token'); },
   set token(v) { v ? localStorage.setItem('meridian_token', v) : localStorage.removeItem('meridian_token'); },
@@ -45,9 +54,14 @@ const API = {
 
   // Traffic
   getTraffic(siteId, hours) { return this.request('GET', '/api/traffic/' + siteId + '?hours=' + (hours || 24)); },
+  getDailyTraffic(siteId, days) { return this.request('GET', '/api/traffic/' + siteId + '/daily?days=' + (days || 30)); },
 
   // Relay Nodes
   getRelayNodes() { return this.request('GET', '/api/relay/nodes'); },
+
+  // Access Logs
+  getAccessLogs(params) { return this.request('GET', '/api/access_logs?' + qs(params)); },
+  getAccessLogStats(params) { return this.request('GET', '/api/access_logs/stats?' + qs(params)); },
 
   // UA Profiles
   getProfiles() { return this.request('GET', '/api/ua-profiles'); },

@@ -39,6 +39,7 @@ func main() {
 		relayName = "relay-default"
 	}
 	isp := strings.TrimSpace(os.Getenv("RELAY_ISP"))
+	accessLogReport := os.Getenv("ACCESS_LOG_REPORT") != "0" // default on
 
 	port := 9090
 	if v := os.Getenv("PORT"); v != "" {
@@ -59,12 +60,20 @@ func main() {
 	// Relay uses no database — pass nil.
 	pm := internal.NewProxyManager(nil)
 
+	// Trusted proxy CIDRs for real client IP detection in access logs.
+	trustedProxies, err := internal.ParseTrustedProxyCIDRs(os.Getenv("TRUSTED_PROXY_CIDRS"))
+	if err != nil {
+		log.Fatalf("invalid TRUSTED_PROXY_CIDRS: %v", err)
+	}
+	pm.SetTrustedProxies(trustedProxies)
+
 	syncer := relay.NewSyncer(relay.Config{
-		MasterURL:  masterURL,
-		RelayToken: relayToken,
-		RelayName:  relayName,
-		ISP:        isp,
-		Version:    appVersion,
+		MasterURL:        masterURL,
+		RelayToken:       relayToken,
+		RelayName:        relayName,
+		ISP:              isp,
+		Version:          appVersion,
+		AccessLogEnabled: accessLogReport,
 	}, pm)
 
 	// Initial synchronous sync: fetches sites + route_prefix from Master before

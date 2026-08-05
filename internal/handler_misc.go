@@ -56,6 +56,30 @@ func (a *App) siteTraffic(c *gin.Context) {
 	c.JSON(http.StatusOK, logs)
 }
 
+// GET /api/traffic/:site_id/daily
+func (a *App) siteDailyTraffic(c *gin.Context) {
+	siteID, err := strconv.ParseInt(c.Param("site_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid site id"})
+		return
+	}
+	days := 30
+	if q := c.Query("days"); q != "" {
+		if v, err := strconv.Atoi(q); err == nil && v >= 1 && v <= 365 {
+			days = v
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be between 1 and 365"})
+			return
+		}
+	}
+	logs, err := a.DB.GetDailyTrafficLogs(siteID, days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, logs)
+}
+
 // GET /api/ua-profiles
 func (a *App) handleUAProfiles(c *gin.Context) {
 	profiles := make([]UAProfile, 0, len(uaProfiles))
