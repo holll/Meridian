@@ -1238,6 +1238,10 @@ canvas#trafficChart { width: 100% !important; height: 280px !important; }
 .alog-status { font-weight: 600; font-variant-numeric: tabular-nums; }
 .alog-method { font-size: .78rem; color: var(--white-60); }
 
+/* Keep log table cells on one line; long tables scroll horizontally instead
+   of squashing columns (path column already truncates with ellipsis). */
+#page-access-logs table { white-space: nowrap; }
+
 .alog-countdown {
   margin-left: auto;
   font-size: .78rem;
