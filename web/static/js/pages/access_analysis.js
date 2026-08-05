@@ -39,9 +39,9 @@ function renderAccessAnalysis() {
     </div>
     <div class="aan-cols fade-up">
       <div class="glass-card">
-        <div class="glass-card-header"><div class="glass-card-title">TOP 国家/地区</div></div>
+        <div class="glass-card-header"><div class="glass-card-title">TOP 地区</div></div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>国家/地区</th><th>次数</th><th>占比</th><th>流量</th></tr></thead>
+          <thead><tr><th>地区</th><th>次数</th><th>占比</th><th>流量</th></tr></thead>
           <tbody id="aan-countries"></tbody>
         </table></div>
       </div>
@@ -123,7 +123,7 @@ async function loadAnalysis() {
       p.is_other
         ? [`<span style="color:var(--white-38)">${esc(p.path)}</span>`, p.count, p.bytes]
         : [esc(p.path), p.count, p.bytes]));
-    renderTopList('aan-countries', (stats.countries || []).map(c => [c.code ? `${c.code} · ${esc(c.name)}` : esc(c.name), c.count, c.bytes]));
+    renderTopList('aan-countries', (stats.regions || []).map(c => [c.code ? `${c.code} · ${esc(c.name)}` : esc(c.name), c.count, c.bytes]));
     renderTopList('aan-orgs', (stats.orgs || []).map(o => [esc(o.name), o.count, o.bytes]));
     renderTopIPs(ips);
   } catch (e) {

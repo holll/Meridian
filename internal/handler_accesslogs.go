@@ -108,18 +108,18 @@ func (a *App) handleAccessLogStats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query access log stats"})
 		return
 	}
-	stats.Countries = []GeoAgg{}
+	stats.Regions = []GeoAgg{}
 	stats.Orgs = []GeoAgg{}
 	if a.GeoLite != nil {
 		for i := range stats.TopIPs {
 			stats.TopIPs[i].Geo = a.GeoLite.Lookup(stats.TopIPs[i].IP)
 		}
-		// Country / ISP rollups over all distinct client IPs in the window.
+		// Region / ISP rollups over all distinct client IPs in the window.
 		ipAggs, aggErr := a.DB.QueryAccessLogIPAggs(siteID, relayName, from, to)
 		if aggErr != nil {
 			log.Printf("access log geo aggregation failed: %v", aggErr)
 		} else {
-			stats.Countries, stats.Orgs = AggregateGeo(ipAggs, a.GeoLite)
+			stats.Regions, stats.Orgs = AggregateGeo(ipAggs, a.GeoLite)
 		}
 	}
 	c.JSON(http.StatusOK, stats)

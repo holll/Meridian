@@ -983,8 +983,8 @@ type AccessLogStats struct {
 	Status       []StatusCount `json:"status"`
 	TopPaths     []TopPath     `json:"top_paths"`
 	TopIPs       []TopIP       `json:"top_ips"`
-	Countries    []GeoAgg      `json:"countries"` // filled by handler from GeoLite
-	Orgs         []GeoAgg      `json:"orgs"`      // filled by handler from GeoLite
+	Regions      []GeoAgg      `json:"regions"` // filled by handler from GeoLite
+	Orgs         []GeoAgg      `json:"orgs"`    // filled by handler from GeoLite
 	AvgLatencyMs int64         `json:"avg_latency_ms"`
 	MaxLatencyMs int64         `json:"max_latency_ms"`
 }

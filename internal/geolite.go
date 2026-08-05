@@ -10,35 +10,42 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"github.com/oschwald/maxminddb-golang"
 )
 
 const (
 	geoliteCityFile = "GeoLite2-City.mmdb"
 	geoliteASNFile  = "GeoLite2-ASN.mmdb"
+	geoliteXDBFile  = "ip2region.xdb"
 	geoliteCityURL  = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb"
 	geoliteASNURL   = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb"
+	geoliteXDBURL   = "https://raw.githubusercontent.com/lionsoul2014/ip2region/master/data/ip2region_v4.xdb"
 )
 
 // GeoInfo is the geolocation and ASN attribution for one IP address.
 type GeoInfo struct {
 	Country     string `json:"country,omitempty"` // Chinese name preferred
 	CountryCode string `json:"country_code,omitempty"`
+	Province    string `json:"province,omitempty"`
 	City        string `json:"city,omitempty"`
 	ASN         uint32 `json:"asn,omitempty"`
 	Org         string `json:"org,omitempty"` // ASN organization (ISP)
 }
 
-// GeoLite holds the loaded MaxMind databases. Nil values are safe to query.
+// GeoLite holds the loaded IP attribution databases. Nil values are safe to query.
 type GeoLite struct {
-	city *maxminddb.Reader
-	asn  *maxminddb.Reader
+	city  *maxminddb.Reader
+	asn   *maxminddb.Reader
+	ip2   *xdb.Searcher // ip2region for CN city coverage (MaxMind lacks it)
+	ip2mu sync.Mutex    // xdb.Searcher is not thread-safe
 }
 
-// OpenGeoLite loads the GeoLite2 City and ASN databases from dir (the binary's
-// directory when dir is empty), downloading them from the mirror when missing.
+// OpenGeoLite loads the GeoLite2 City/ASN and ip2region databases from dir
+// (the binary's directory when dir is empty), downloading them when missing.
 // Returns nil with a logged warning when unavailable so the panel keeps
 // working without geolocation.
 func OpenGeoLite(dir string) *GeoLite {
@@ -55,11 +62,12 @@ func OpenGeoLite(dir string) *GeoLite {
 	}
 	city := loadOrDownload(filepath.Join(dir, geoliteCityFile), geoliteCityURL)
 	asn := loadOrDownload(filepath.Join(dir, geoliteASNFile), geoliteASNURL)
-	if city == nil && asn == nil {
+	ip2 := loadXDB(filepath.Join(dir, geoliteXDBFile), geoliteXDBURL)
+	if city == nil && asn == nil && ip2 == nil {
 		return nil
 	}
-	log.Printf("[geolite] loaded City+ASN databases from %s", dir)
-	return &GeoLite{city: city, asn: asn}
+	log.Printf("[geolite] loaded City+ASN+ip2region databases from %s", dir)
+	return &GeoLite{city: city, asn: asn, ip2: ip2}
 }
 
 func (g *GeoLite) Close() {
@@ -99,6 +107,22 @@ func (g *GeoLite) Lookup(ipStr string) *GeoInfo {
 			info.CountryCode = rec.Country.ISOCode
 			info.Country = preferredGeoName(rec.Country.Names)
 			info.City = preferredGeoName(rec.City.Names)
+		}
+	}
+	// ip2region covers Chinese IPs with province/city data that MaxMind's free
+	// City database lacks. Region format: 国家|省份|城市|ISP.
+	if g.ip2 != nil {
+		g.ip2mu.Lock()
+		region, err := g.ip2.Search(ipStr)
+		g.ip2mu.Unlock()
+		if err == nil {
+			parts := strings.Split(region, "|")
+			if len(parts) >= 2 && parts[1] != "0" && parts[1] != "" {
+				info.Province = parts[1]
+			}
+			if len(parts) >= 3 && parts[2] != "0" && parts[2] != "" {
+				info.City = parts[2]
+			}
 		}
 	}
 	if g.asn != nil {
@@ -146,40 +170,54 @@ type GeoAgg struct {
 	Bytes int64  `json:"bytes"`
 }
 
-// AggregateGeo folds per-IP aggregations into country and ISP totals,
-// both sorted by request count (top 20).
-func AggregateGeo(aggs []AccessLogIPAgg, gl *GeoLite) (countries, orgs []GeoAgg) {
-	countryMap := make(map[string]*GeoAgg)
+// AggregateGeo folds per-IP aggregations into region (city preferred, country
+// fallback) and ISP totals, both sorted by request count (top 20). China's
+// three big ISPs are normalized to Chinese labels so their many ASN org names
+// (e.g. "Chinanet", "China Telecom (Group)") roll up into one bucket.
+func AggregateGeo(aggs []AccessLogIPAgg, gl *GeoLite) (regions, orgs []GeoAgg) {
+	regionMap := make(map[string]*GeoAgg)
 	orgMap := make(map[string]*GeoAgg)
 	for _, a := range aggs {
 		geo := gl.Lookup(a.IP)
 		if geo == nil {
 			continue
 		}
-		name := geo.Country
+		name := geo.City
+		if name == "" {
+			name = geo.Country
+		}
 		if name == "" {
 			name = geo.CountryCode
 		}
 		if name != "" {
-			c := countryMap[name]
-			if c == nil {
-				countryMap[name] = &GeoAgg{Name: name, Code: geo.CountryCode, Count: a.Count, Bytes: a.BytesOut}
+			r := regionMap[name]
+			if r == nil {
+				regionMap[name] = &GeoAgg{Name: name, Code: geo.CountryCode, Count: a.Count, Bytes: a.BytesOut}
 			} else {
-				c.Count += a.Count
-				c.Bytes += a.BytesOut
+				r.Count += a.Count
+				r.Bytes += a.BytesOut
 			}
 		}
 		if geo.Org != "" {
-			o := orgMap[geo.Org]
+			orgKey := geo.Org
+			switch DetectISP(geo) {
+			case "telecom":
+				orgKey = "电信"
+			case "unicom":
+				orgKey = "联通"
+			case "mobile":
+				orgKey = "移动"
+			}
+			o := orgMap[orgKey]
 			if o == nil {
-				orgMap[geo.Org] = &GeoAgg{Name: geo.Org, Count: a.Count, Bytes: a.BytesOut}
+				orgMap[orgKey] = &GeoAgg{Name: orgKey, Count: a.Count, Bytes: a.BytesOut}
 			} else {
 				o.Count += a.Count
 				o.Bytes += a.BytesOut
 			}
 		}
 	}
-	countries = topGeoAggs(countryMap)
+	regions = topGeoAggs(regionMap)
 	orgs = topGeoAggs(orgMap)
 	return
 }
@@ -210,13 +248,22 @@ func preferredGeoName(names map[string]string) string {
 	return names["en"]
 }
 
+// ensureDownloaded downloads url into path when the file is missing.
+func ensureDownloaded(path, url string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	log.Printf("[geolite] %s not found, downloading from %s", filepath.Base(path), url)
+	if err := downloadFile(path, url); err != nil {
+		return fmt.Errorf("download %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
 func loadOrDownload(path, url string) *maxminddb.Reader {
-	if _, err := os.Stat(path); err != nil {
-		log.Printf("[geolite] %s not found, downloading from %s", filepath.Base(path), url)
-		if err := downloadFile(path, url); err != nil {
-			log.Printf("[geolite] download %s failed: %v", filepath.Base(path), err)
-			return nil
-		}
+	if err := ensureDownloaded(path, url); err != nil {
+		log.Printf("[geolite] %v", err)
+		return nil
 	}
 	reader, err := maxminddb.Open(path)
 	if err != nil {
@@ -224,6 +271,24 @@ func loadOrDownload(path, url string) *maxminddb.Reader {
 		return nil
 	}
 	return reader
+}
+
+func loadXDB(path, url string) *xdb.Searcher {
+	if err := ensureDownloaded(path, url); err != nil {
+		log.Printf("[geolite] %v", err)
+		return nil
+	}
+	buffer, err := xdb.LoadContentFromFile(path)
+	if err != nil {
+		log.Printf("[geolite] load %s failed: %v", path, err)
+		return nil
+	}
+	searcher, err := xdb.NewWithBuffer(xdb.IPv4, buffer)
+	if err != nil {
+		log.Printf("[geolite] init %s failed: %v", path, err)
+		return nil
+	}
+	return searcher
 }
 
 // downloadFile fetches url into path via a temp file so a failed download

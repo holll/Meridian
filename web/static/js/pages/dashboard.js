@@ -241,9 +241,12 @@ function formatLatency(ms) {
 }
 
 // geoCell renders the geolocation/ISP attribution for one IP (from GeoLite).
+// City (with province) is preferred over country when available.
 function geoCell(geo) {
   if (!geo) return '<span style="color:var(--white-38)">—</span>';
-  const place = [geo.country, geo.city].filter(Boolean).join(' · ');
+  const place = geo.city
+    ? [geo.city, geo.province].filter(Boolean).join(' · ')
+    : [geo.country, geo.city].filter(Boolean).join(' · ');
   const org = geo.org || '';
   return `<div class="geo-main">${esc(place)}</div>${org ? `<div class="geo-sub">${esc(org)}</div>` : ''}`;
 }
