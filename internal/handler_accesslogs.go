@@ -55,13 +55,18 @@ func parseAccessLogFilters(c *gin.Context) (siteID, from, to int64, relayName st
 }
 
 // handleAccessLogs returns a paginated list of access logs for the management panel.
-// GET /api/access_logs?site_id=&relay_name=&status=&from=&to=&page=&page_size=
+// GET /api/access_logs?site_id=&relay_name=&status=&ip=&path=&isp=&from=&to=&page=&page_size=
+// ip/path are prefix filters; isp is a two-step filter (resolve IPs by
+// GeoLite attribution, then query those IPs).
 func (a *App) handleAccessLogs(c *gin.Context) {
 	siteID, from, to, relayName := parseAccessLogFilters(c)
 	var status int
 	if v := c.Query("status"); v != "" {
 		status, _ = strconv.Atoi(v)
 	}
+	ipPrefix := c.Query("ip")
+	pathPrefix := c.Query("path")
+	isp := c.Query("isp")
 	page := 1
 	if v := c.Query("page"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil && p > 0 {
@@ -78,7 +83,37 @@ func (a *App) handleAccessLogs(c *gin.Context) {
 		pageSize = 200
 	}
 
-	logs, total, err := a.DB.QueryAccessLogs(siteID, relayName, from, to, status, page, pageSize)
+	var ispIPs []string
+	if isp != "" {
+		if a.GeoLite == nil {
+			empty(c, page, pageSize)
+			return
+		}
+		ips, err := a.DB.DistinctClientIPs(siteID, relayName, from, to)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query access logs"})
+			return
+		}
+		for _, ip := range ips {
+			if MatchISP(a.GeoLite.Lookup(ip), isp) {
+				ispIPs = append(ispIPs, ip)
+			}
+		}
+		if len(ispIPs) == 0 {
+			empty(c, page, pageSize)
+			return
+		}
+	}
+
+	var logs []AccessLogRow
+	var total int64
+	var err error
+	if len(ispIPs) > 0 {
+		// #nosec G202 -- fragments are fixed; IPs are bound via placeholders
+		logs, total, err = a.DB.QueryAccessLogsByIPs(siteID, relayName, from, to, status, ipPrefix, pathPrefix, ispIPs, page, pageSize)
+	} else {
+		logs, total, err = a.DB.QueryAccessLogs(siteID, relayName, from, to, status, ipPrefix, pathPrefix, page, pageSize)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query access logs"})
 		return
@@ -96,8 +131,18 @@ func (a *App) handleAccessLogs(c *gin.Context) {
 	})
 }
 
+// empty returns an empty access log page with consistent pagination fields.
+func empty(c *gin.Context, page, pageSize int) {
+	c.JSON(http.StatusOK, gin.H{
+		"total":     0,
+		"page":      page,
+		"page_size": pageSize,
+		"logs":      []AccessLogRow{},
+	})
+}
+
 // handleAccessLogStats returns aggregated access log statistics for the analysis page.
-// GET /api/access_logs/stats?site_id=&relay_name=&from=&to=
+// GET /api/access_logs/stats?site_id=&relay_name=&from=&to=&top_sort=count|bytes
 func (a *App) handleAccessLogStats(c *gin.Context) {
 	siteID, from, to, relayName := parseAccessLogFilters(c)
 	if from <= 0 {
@@ -106,8 +151,9 @@ func (a *App) handleAccessLogStats(c *gin.Context) {
 	if to <= 0 {
 		to = time.Now().Unix()
 	}
+	topSort := c.Query("top_sort")
 
-	stats, err := a.DB.QueryAccessLogStats(siteID, relayName, from, to)
+	stats, err := a.DB.QueryAccessLogStats(siteID, relayName, from, to, topSort)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query access log stats"})
 		return

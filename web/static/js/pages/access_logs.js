@@ -4,6 +4,7 @@ let accessLogPage = 1;
 let accessLogLoadSeq = 0; // guards against stale responses overwriting newer ones
 const accessLogRefreshSeconds = 30;
 let accessLogCountdown = accessLogRefreshSeconds;
+let pendingLogFilter = null; // filters linked from the analysis page
 
 function renderAccessLogs() {
   const page = document.getElementById('page-access-logs');
@@ -13,7 +14,23 @@ function renderAccessLogs() {
     <div class="controls-row fade-up stagger-1">
       <select class="form-select" id="alog-site-select"><option value="">全部站点</option></select>
       <select class="form-select" id="alog-node-select"><option value="">全部节点</option></select>
-      <input type="number" min="100" max="599" class="form-input" id="alog-status-input" placeholder="状态码（如 502）" style="width:150px" title="按状态码筛选，留空为全部">
+      <select class="form-select" id="alog-isp-select" title="按运营商筛选">
+        <option value="">全部运营商</option>
+        <option value="telecom">电信</option>
+        <option value="unicom">联通</option>
+        <option value="mobile">移动</option>
+        <option value="hk">港澳</option>
+        <option value="oversea">海外</option>
+      </select>
+      <input type="text" class="form-input" id="alog-ip-input" placeholder="IP 前缀，如 1.2.3" autocomplete="off" spellcheck="false" style="width:150px">
+      <input type="text" class="form-input" id="alog-path-input" placeholder="路径前缀，如 /emby/Users" autocomplete="off" spellcheck="false" style="width:180px">
+      <input type="number" min="100" max="599" class="form-input" id="alog-status-input" placeholder="状态码" style="width:110px" title="按状态码筛选，留空为全部">
+      <select class="form-select" id="alog-range-select" title="时间范围">
+        <option value="1">最近 1 小时</option>
+        <option value="6">最近 6 小时</option>
+        <option value="24" selected>最近 24 小时</option>
+        <option value="168">最近 7 天</option>
+      </select>
       <button class="btn-login" id="btn-alog-refresh" style="width:auto;padding:8px 18px">刷新</button>
     </div>
     <div class="glass-card fade-up stagger-2">
@@ -36,14 +53,26 @@ function renderAccessLogs() {
 
   document.getElementById('alog-site-select').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
   document.getElementById('alog-node-select').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
+  document.getElementById('alog-isp-select').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
+  document.getElementById('alog-ip-input').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
+  document.getElementById('alog-path-input').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
   document.getElementById('alog-status-input').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
+  document.getElementById('alog-range-select').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
   document.getElementById('btn-alog-refresh').onclick = () => loadAccessLogs(false);
 
-  // Consume a status code linked from the analysis page (e.g. click on 502).
-  const linkedStatus = sessionStorage.getItem('alog_status');
-  if (linkedStatus) {
-    sessionStorage.removeItem('alog_status');
-    document.getElementById('alog-status-input').value = linkedStatus;
+  // Consume filters linked from the analysis page (status code click).
+  pendingLogFilter = null;
+  const linked = sessionStorage.getItem('alog_filter');
+  if (linked) {
+    sessionStorage.removeItem('alog_filter');
+    try { pendingLogFilter = JSON.parse(linked); } catch (e) { /* ignore */ }
+  } else {
+    // Backward compatibility with the old single-status link.
+    const linkedStatus = sessionStorage.getItem('alog_status');
+    if (linkedStatus) {
+      sessionStorage.removeItem('alog_status');
+      pendingLogFilter = { status: linkedStatus };
+    }
   }
 
   loadAccessLogFilters();
@@ -84,6 +113,29 @@ async function loadAccessLogFilters() {
   } catch (e) {
     Toast.error('加载筛选选项失败');
   }
+  applyLinkedLogFilter();
+}
+
+// applyLinkedLogFilter fills the filter controls from a filter object linked
+// from the analysis page (site/node/status/time). Called after the site/node
+// selects are populated so their values can be set.
+function applyLinkedLogFilter() {
+  const f = pendingLogFilter;
+  if (!f) return;
+  pendingLogFilter = null;
+
+  if (f.site_id) document.getElementById('alog-site-select').value = String(f.site_id);
+  if (f.relay_name) document.getElementById('alog-node-select').value = f.relay_name;
+  if (f.status) document.getElementById('alog-status-input').value = String(f.status);
+  if (f.from && f.to) {
+    const hours = Math.round((f.to - f.from) / 3600);
+    const rangeSel = document.getElementById('alog-range-select');
+    const presets = ['1', '6', '24', '168'];
+    if (!presets.includes(String(hours))) {
+      rangeSel.insertAdjacentHTML('beforeend', `<option value="${hours}">自定义（${hours} 小时）</option>`);
+    }
+    rangeSel.value = String(hours);
+  }
 }
 
 async function loadAccessLogs(silent) {
@@ -93,14 +145,24 @@ async function loadAccessLogs(silent) {
   scheduleAccessLogRefresh(); // any load restarts the auto-refresh countdown
   const siteId = document.getElementById('alog-site-select').value;
   const relayName = document.getElementById('alog-node-select').value;
+  const isp = document.getElementById('alog-isp-select').value;
+  const ip = document.getElementById('alog-ip-input').value.trim();
+  const path = document.getElementById('alog-path-input').value.trim();
   const status = document.getElementById('alog-status-input').value.trim();
+  const hours = parseInt(document.getElementById('alog-range-select').value) || 24;
+  const now = Math.floor(Date.now() / 1000);
   const seq = ++accessLogLoadSeq;
 
   try {
     const data = await API.getAccessLogs({
       site_id: siteId,
       relay_name: relayName,
+      isp: isp,
+      ip: ip,
+      path: path,
       status: status,
+      from: now - hours * 3600,
+      to: now,
       page: accessLogPage,
       page_size: 50,
     });

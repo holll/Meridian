@@ -118,6 +118,51 @@ func TestHandleAccessLogsEndpointPaginates(t *testing.T) {
 	}
 }
 
+func TestHandleAccessLogsSearchParams(t *testing.T) {
+	app := newTestApp(t)
+	router := setupTestRouter(app)
+	token := createTestAdmin(t, app)
+
+	base := time.Now().Unix()
+	if err := app.DB.AddAccessLogs("node1", []AccessLogEntry{
+		{Timestamp: base, SiteID: 1, ClientIP: "1.2.3.4", Method: "GET", Path: "/emby/Users/1", Status: 200},
+		{Timestamp: base - 1, SiteID: 1, ClientIP: "9.9.9.9", Method: "GET", Path: "/other", Status: 404},
+	}); err != nil {
+		t.Fatalf("AddAccessLogs: %v", err)
+	}
+
+	query := func(qs string) map[string]interface{} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodGet, "/api/access_logs?"+qs, nil), token))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+		}
+		return decodeBody(t, w)
+	}
+
+	// Path prefix filter.
+	body := query("path=/emby/Users")
+	if got := mustNumberValue(t, body, "total"); got != 1 {
+		t.Fatalf("path prefix total = %d, want 1", got)
+	}
+
+	// IP prefix filter.
+	body = query("ip=1.2.3")
+	if got := mustNumberValue(t, body, "total"); got != 1 {
+		t.Fatalf("ip prefix total = %d, want 1", got)
+	}
+
+	// ISP filter with no GeoLite configured: 200 with an empty result set.
+	body = query("isp=telecom")
+	if got := mustNumberValue(t, body, "total"); got != 0 {
+		t.Fatalf("isp total = %d, want 0 (no GeoLite)", got)
+	}
+	logs, ok := body["logs"].([]interface{})
+	if !ok || len(logs) != 0 {
+		t.Fatalf("isp logs = %#v, want empty array", body["logs"])
+	}
+}
+
 func TestHandleAccessLogStatsEndpointDefaultsToLast24h(t *testing.T) {
 	app := newTestApp(t)
 	router := setupTestRouter(app)

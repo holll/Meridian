@@ -1280,6 +1280,28 @@ canvas#trafficChart { width: 100% !important; height: 280px !important; }
   gap: 12px;
 }
 
+.aan-top-sort {
+  display: flex;
+  gap: 6px;
+}
+.aan-sort-btn {
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--glass-border);
+  color: var(--white-60);
+  font-size: .72rem;
+  padding: 4px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.aan-sort-btn:hover { color: var(--white-87); }
+.aan-sort-btn.active {
+  background: rgba(10,132,255,.18);
+  color: var(--blue);
+  border-color: rgba(10,132,255,.4);
+}
+.top-dim { color: var(--white-38); }
+
 .aan-status-item {
   padding: 12px 14px;
   border-radius: 10px;

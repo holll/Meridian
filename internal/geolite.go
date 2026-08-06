@@ -133,6 +133,12 @@ func DetectISP(geo *GeoInfo) string {
 	return "oversea"
 }
 
+// MatchISP reports whether an IP's attribution matches an operator label
+// (telecom/unicom/mobile/hk/oversea, as produced by DetectISP).
+func MatchISP(geo *GeoInfo, isp string) bool {
+	return geo != nil && DetectISP(geo) == isp
+}
+
 // GeoAgg is one country or ISP (ASN org) aggregation bucket.
 type GeoAgg struct {
 	Name  string `json:"name"`

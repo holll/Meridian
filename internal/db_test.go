@@ -324,7 +324,7 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Filter by site: 3 rows for site.ID, all joined with the site name.
-	logs, total, err := app.DB.QueryAccessLogs(site.ID, "", 0, 0, 0, 1, 50)
+	logs, total, err := app.DB.QueryAccessLogs(site.ID, "", 0, 0, 0, "", "", 1, 50)
 	if err != nil {
 		t.Fatalf("QueryAccessLogs: %v", err)
 	}
@@ -338,14 +338,14 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Filter by relay name.
-	_, total, err = app.DB.QueryAccessLogs(0, "node1", 0, 0, 0, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "node1", 0, 0, 0, "", "", 1, 50)
 	if err != nil {
 		t.Fatalf("relay filter: %v", err)
 	}
 	if total != 4 {
 		t.Fatalf("relay filter total = %d, want 4", total)
 	}
-	_, total, err = app.DB.QueryAccessLogs(0, "missing", 0, 0, 0, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "missing", 0, 0, 0, "", "", 1, 50)
 	if err != nil {
 		t.Fatalf("relay miss: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Time window: [base-150, base-50] covers the two newest rows.
-	_, total, err = app.DB.QueryAccessLogs(0, "", base-150, base+50, 0, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "", base-150, base+50, 0, "", "", 1, 50)
 	if err != nil {
 		t.Fatalf("time filter: %v", err)
 	}
@@ -363,14 +363,14 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Filter by status code: one 404 row, two 200 rows.
-	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 404, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 404, "", "", 1, 50)
 	if err != nil {
 		t.Fatalf("status filter: %v", err)
 	}
 	if total != 1 {
 		t.Fatalf("status 404 total = %d, want 1", total)
 	}
-	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 200, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 200, "", "", 1, 50)
 	if err != nil {
 		t.Fatalf("status filter 200: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Pagination: newest first, page 2 of page size 2.
-	pageLogs, total, err := app.DB.QueryAccessLogs(0, "", 0, 0, 0, 2, 2)
+	pageLogs, total, err := app.DB.QueryAccessLogs(0, "", 0, 0, 0, "", "", 2, 2)
 	if err != nil {
 		t.Fatalf("paged query: %v", err)
 	}
@@ -388,6 +388,127 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 	if pageLogs[0].Path != "/b" {
 		t.Fatalf("page 2 first path = %q, want /b (id desc)", pageLogs[0].Path)
+	}
+}
+
+func TestQueryAccessLogsPrefixSearch(t *testing.T) {
+	app := newTestApp(t)
+	base := time.Now().Unix()
+	entries := []AccessLogEntry{
+		{Timestamp: base, SiteID: 1, ClientIP: "1.2.3.4", Method: "GET", Path: "/emby/Users/1", Status: 200, BytesOut: 10},
+		{Timestamp: base - 10, SiteID: 1, ClientIP: "1.2.3.5", Method: "GET", Path: "/emby/Users/2", Status: 200, BytesOut: 20},
+		{Timestamp: base - 20, SiteID: 1, ClientIP: "2.2.2.2", Method: "POST", Path: "/emby/Sessions", Status: 204, BytesOut: 30},
+		{Timestamp: base - 30, SiteID: 1, ClientIP: "1.2.99.1", Method: "GET", Path: "/other", Status: 200, BytesOut: 40},
+	}
+	if err := app.DB.AddAccessLogs("node1", entries); err != nil {
+		t.Fatalf("AddAccessLogs: %v", err)
+	}
+
+	// Path prefix: /emby/Users matches two rows, /emby matches three.
+	_, total, err := app.DB.QueryAccessLogs(0, "", 0, 0, 0, "", "/emby/Users", 1, 50)
+	if err != nil {
+		t.Fatalf("path prefix: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("path prefix total = %d, want 2", total)
+	}
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 0, "", "/emby", 1, 50)
+	if err != nil {
+		t.Fatalf("path prefix emby: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("path prefix /emby total = %d, want 3", total)
+	}
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 0, "", "/nonexistent", 1, 50)
+	if err != nil {
+		t.Fatalf("path prefix miss: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("path prefix miss total = %d, want 0", total)
+	}
+
+	// IP prefix: 1.2.3 matches two rows.
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 0, "1.2.3", "", 1, 50)
+	if err != nil {
+		t.Fatalf("ip prefix: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("ip prefix total = %d, want 2", total)
+	}
+
+	// Combined path prefix + status: /emby with 204 matches one row.
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 204, "", "/emby", 1, 50)
+	if err != nil {
+		t.Fatalf("combined filter: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("combined total = %d, want 1", total)
+	}
+}
+
+func TestAccessLogSearchIndexesExist(t *testing.T) {
+	app := newTestApp(t)
+	for _, idx := range []string{"idx_access_logs_status", "idx_access_logs_path", "idx_access_logs_ip"} {
+		var name string
+		err := app.DB.DB.QueryRow(
+			"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx).Scan(&name)
+		if err != nil {
+			t.Fatalf("index %s missing: %v", idx, err)
+		}
+	}
+}
+
+func TestQueryAccessLogStatsTopSortByBytes(t *testing.T) {
+	app := newTestApp(t)
+	base := time.Now().Unix()
+	entries := []AccessLogEntry{
+		{Timestamp: base, SiteID: 1, ClientIP: "1.1.1.1", Method: "GET", Path: "/small", Status: 200, BytesOut: 10},
+		{Timestamp: base - 1, SiteID: 1, ClientIP: "1.1.1.1", Method: "GET", Path: "/big", Status: 200, BytesOut: 500},
+		{Timestamp: base - 2, SiteID: 1, ClientIP: "1.1.1.1", Method: "GET", Path: "/small", Status: 200, BytesOut: 10},
+	}
+	if err := app.DB.AddAccessLogs("node1", entries); err != nil {
+		t.Fatalf("AddAccessLogs: %v", err)
+	}
+
+	byCount, err := app.DB.QueryAccessLogStats(0, "", 0, 0, "count")
+	if err != nil {
+		t.Fatalf("topSort count: %v", err)
+	}
+	if byCount.TopPaths[0].Path != "/small" {
+		t.Fatalf("count sort first = %q, want /small (2 requests)", byCount.TopPaths[0].Path)
+	}
+	byBytes, err := app.DB.QueryAccessLogStats(0, "", 0, 0, "bytes")
+	if err != nil {
+		t.Fatalf("topSort bytes: %v", err)
+	}
+	if byBytes.TopPaths[0].Path != "/big" {
+		t.Fatalf("bytes sort first = %q, want /big (500 bytes)", byBytes.TopPaths[0].Path)
+	}
+}
+
+func TestDistinctClientIPs(t *testing.T) {
+	app := newTestApp(t)
+	base := time.Now().Unix()
+	if err := app.DB.AddAccessLogs("node1", []AccessLogEntry{
+		{Timestamp: base, SiteID: 1, ClientIP: "1.1.1.1", Method: "GET", Path: "/a", Status: 200},
+		{Timestamp: base - 1, SiteID: 1, ClientIP: "1.1.1.1", Method: "GET", Path: "/b", Status: 200},
+		{Timestamp: base - 2, SiteID: 2, ClientIP: "2.2.2.2", Method: "GET", Path: "/c", Status: 200},
+	}); err != nil {
+		t.Fatalf("AddAccessLogs: %v", err)
+	}
+	ips, err := app.DB.DistinctClientIPs(0, "", 0, 0)
+	if err != nil {
+		t.Fatalf("DistinctClientIPs: %v", err)
+	}
+	if len(ips) != 2 {
+		t.Fatalf("distinct ips = %v, want 2 entries", ips)
+	}
+	ips, err = app.DB.DistinctClientIPs(2, "", 0, 0)
+	if err != nil {
+		t.Fatalf("DistinctClientIPs site filter: %v", err)
+	}
+	if len(ips) != 1 || ips[0] != "2.2.2.2" {
+		t.Fatalf("site-filtered ips = %v, want [2.2.2.2]", ips)
 	}
 }
 
@@ -407,7 +528,7 @@ func TestQueryAccessLogStatsAggregations(t *testing.T) {
 		t.Fatalf("AddAccessLogs: %v", err)
 	}
 
-	stats, err := app.DB.QueryAccessLogStats(site.ID, "", hour-7200, hour+7200)
+	stats, err := app.DB.QueryAccessLogStats(site.ID, "", hour-7200, hour+7200, "")
 	if err != nil {
 		t.Fatalf("QueryAccessLogStats: %v", err)
 	}
@@ -476,7 +597,7 @@ func TestQueryAccessLogStatsRollsUpTopPathsBeyondLimit(t *testing.T) {
 	if err := app.DB.AddAccessLogs("node1", entries); err != nil {
 		t.Fatalf("AddAccessLogs: %v", err)
 	}
-	stats, err := app.DB.QueryAccessLogStats(0, "", 0, 0)
+	stats, err := app.DB.QueryAccessLogStats(0, "", 0, 0, "")
 	if err != nil {
 		t.Fatalf("QueryAccessLogStats: %v", err)
 	}

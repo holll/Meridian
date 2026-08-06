@@ -26,6 +26,22 @@ func TestDetectISPClassifiesOperators(t *testing.T) {
 	}
 }
 
+func TestMatchISP(t *testing.T) {
+	geo := &GeoInfo{Org: "Chinanet", Country: "中国", CountryCode: "CN"}
+	if !MatchISP(geo, "telecom") {
+		t.Fatal("Chinanet must match telecom")
+	}
+	if MatchISP(geo, "unicom") {
+		t.Fatal("Chinanet must not match unicom")
+	}
+	if MatchISP(nil, "telecom") {
+		t.Fatal("nil geo must not match")
+	}
+	if MatchISP(geo, "") {
+		t.Fatal("empty label must not match")
+	}
+}
+
 func TestAggregateGeoSkipsUnattributedIPs(t *testing.T) {
 	aggs := []AccessLogIPAgg{
 		{IP: "1.1.1.1", Count: 3, BytesOut: 30},

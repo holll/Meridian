@@ -292,6 +292,9 @@ func (d *DB) migrateOnce() error {
 		CREATE INDEX IF NOT EXISTS idx_access_logs_ts      ON access_logs(ts);
 		CREATE INDEX IF NOT EXISTS idx_access_logs_site_ts ON access_logs(site_id, ts);
 		CREATE INDEX IF NOT EXISTS idx_access_logs_relay    ON access_logs(relay_name, ts);
+		CREATE INDEX IF NOT EXISTS idx_access_logs_status   ON access_logs(status);
+		CREATE INDEX IF NOT EXISTS idx_access_logs_path     ON access_logs(path);
+		CREATE INDEX IF NOT EXISTS idx_access_logs_ip       ON access_logs(client_ip);
 	`); err != nil {
 		return err
 	}
@@ -898,17 +901,61 @@ func accessLogWhere(siteID int64, relayName string, from, to int64) (string, []i
 	return where, args
 }
 
+// appendSearchWhere extends the WHERE clause with prefix filters on client_ip
+// and path. Wildcards in the user input are stripped so LIKE 'prefix%' keeps
+// its prefix-index optimization and matches literal text.
+func appendSearchWhere(where string, args []interface{}, ipPrefix, pathPrefix string) (string, []interface{}) {
+	if ipPrefix != "" {
+		where += " AND l.client_ip LIKE ?"
+		args = append(args, stripLikeWildcards(ipPrefix)+"%")
+	}
+	if pathPrefix != "" {
+		where += " AND l.path LIKE ?"
+		args = append(args, stripLikeWildcards(pathPrefix)+"%")
+	}
+	return where, args
+}
+
+func stripLikeWildcards(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "%", ""), "_", "")
+}
+
 // QueryAccessLogs returns a page of access logs matching the given filters
-// (siteID/relayName may be 0/"" for "any", status 0 for "any"), ordered
-// newest first, plus the total count for pagination.
-func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, status, page, pageSize int) ([]AccessLogRow, int64, error) {
+// (siteID/relayName may be 0/"" for "any", status 0 and ipPrefix/pathPrefix ""
+// for "any"), ordered newest first, plus the total count for pagination.
+// ipPrefix/pathPrefix match the start of client_ip/path.
+func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, status int, ipPrefix, pathPrefix string, page, pageSize int) ([]AccessLogRow, int64, error) {
 	where, args := accessLogWhere(siteID, relayName, from, to)
 	if status > 0 {
 		where += " AND l.status = ?"
 		args = append(args, status)
 	}
+	where, args = appendSearchWhere(where, args, ipPrefix, pathPrefix)
+	return d.queryAccessLogPage(where, args, page, pageSize)
+}
 
+// QueryAccessLogsByIPs is QueryAccessLogs with an additional client_ip IN (...)
+// filter (used by the ISP two-step search).
+func (d *DB) QueryAccessLogsByIPs(siteID int64, relayName string, from, to int64, status int, ipPrefix, pathPrefix string, ips []string, page, pageSize int) ([]AccessLogRow, int64, error) {
+	where, args := accessLogWhere(siteID, relayName, from, to)
+	if status > 0 {
+		where += " AND l.status = ?"
+		args = append(args, status)
+	}
+	where, args = appendSearchWhere(where, args, ipPrefix, pathPrefix)
+	if len(ips) > 0 {
+		where += " AND l.client_ip IN (" + strings.TrimSuffix(strings.Repeat("?,", len(ips)), ",") + ")"
+		for _, ip := range ips {
+			args = append(args, ip)
+		}
+	}
+	return d.queryAccessLogPage(where, args, page, pageSize)
+}
+
+// queryAccessLogPage runs the count + paged select for a prepared WHERE clause.
+func (d *DB) queryAccessLogPage(where string, args []interface{}, page, pageSize int) ([]AccessLogRow, int64, error) {
 	var total int64
+	// #nosec G202 -- callers build where from fixed fragments with bound args
 	if err := d.DB.QueryRow("SELECT COUNT(*) FROM access_logs l WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -917,7 +964,7 @@ func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, sta
 	if offset < 0 {
 		offset = 0
 	}
-	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
+	// #nosec G202 -- callers build where from fixed fragments with bound args
 	query := `
 		SELECT l.id, l.ts, l.relay_name, l.site_id, COALESCE(s.name, ''), l.client_ip,
 		       l.method, l.path, l.status, l.latency_ms, l.bytes_in, l.bytes_out
@@ -948,6 +995,38 @@ func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, sta
 		logs = []AccessLogRow{}
 	}
 	return logs, total, nil
+}
+
+// maxClientIPsForISP caps how many distinct client IPs the ISP filter will
+// resolve. SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so the IN list
+// stays well under that.
+const maxClientIPsForISP = 900
+
+// DistinctClientIPs returns the distinct client IPs matching the filters,
+// bounded so the ISP two-step filter cannot blow up the IN clause.
+func (d *DB) DistinctClientIPs(siteID int64, relayName string, from, to int64) ([]string, error) {
+	where, args := accessLogWhere(siteID, relayName, from, to)
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
+	rows, err := d.DB.Query(`
+		SELECT DISTINCT l.client_ip FROM access_logs l
+		WHERE `+where+`
+		LIMIT ?`, append(args, maxClientIPsForISP+1)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err != nil {
+			return nil, err
+		}
+		ips = append(ips, ip)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ips, nil
 }
 
 // TrendPoint is one hourly bucket of access log aggregation.
@@ -1034,7 +1113,11 @@ func (d *DB) QueryAccessLogIPAggs(siteID int64, relayName string, from, to int64
 }
 
 // QueryAccessLogStats aggregates access logs over the given filters.
-func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64) (*AccessLogStats, error) {
+// topSort is "count" (default) or "bytes" and controls the TOP paths ordering.
+func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64, topSort string) (*AccessLogStats, error) {
+	if topSort != "bytes" {
+		topSort = "count"
+	}
 	where, args := accessLogWhere(siteID, relayName, from, to)
 
 	stats := &AccessLogStats{
@@ -1111,12 +1194,17 @@ func (d *DB) QueryAccessLogStats(siteID int64, relayName string, from, to int64)
 	// Top paths: keep the top 10 and roll the rest up into a single
 	// "other" bucket so the list stays short even with many distinct paths.
 	// Bytes are outbound only (node → user), matching the other traffic columns.
-	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; values are bound via args
+	// topSort is a whitelisted constant ("count"/"bytes"), never user input.
+	topOrder := "COUNT(*) DESC"
+	if topSort == "bytes" {
+		topOrder = "SUM(l.bytes_out) DESC" // whitelisted constant, never user input
+	}
+	// #nosec G202 -- accessLogWhere emits only fixed SQL fragments; topOrder is a whitelisted constant
 	rows, err = d.DB.Query(`
 		SELECT l.path, COUNT(*), SUM(l.bytes_out) FROM access_logs l
 		WHERE `+where+`
 		GROUP BY l.path
-		ORDER BY COUNT(*) DESC`, args...)
+		ORDER BY `+topOrder, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,6 @@
 // Access log analysis page — aggregations over relay-reported access logs
+let aanTopSort = 'count'; // TOP resources ordering: count | bytes
+
 function renderAccessAnalysis() {
   const page = document.getElementById('page-access-analysis');
   page.innerHTML = `
@@ -30,7 +32,13 @@ function renderAccessAnalysis() {
         <div class="aan-status-grid" id="aan-status"></div>
       </div>
       <div class="glass-card">
-        <div class="glass-card-header"><div class="glass-card-title">TOP 资源</div></div>
+        <div class="glass-card-header">
+          <div class="glass-card-title">TOP 资源</div>
+          <div class="aan-top-sort" id="aan-top-sort">
+            <button class="aan-sort-btn" data-sort="count">次数</button>
+            <button class="aan-sort-btn" data-sort="bytes">流量</button>
+          </div>
+        </div>
         <div style="overflow-x:auto"><table>
           <thead><tr><th>路径</th><th>次数</th><th>占比</th><th>流量</th></tr></thead>
           <tbody id="aan-paths"></tbody>
@@ -67,6 +75,12 @@ function renderAccessAnalysis() {
   document.getElementById('aan-node-select').onchange = loadAnalysis;
   document.getElementById('aan-range-select').onchange = loadAnalysis;
   document.getElementById('btn-aan-refresh').onclick = loadAnalysis;
+  document.getElementById('aan-top-sort').onclick = e => {
+    const btn = e.target.closest('.aan-sort-btn');
+    if (!btn) return;
+    aanTopSort = btn.dataset.sort;
+    loadAnalysis();
+  };
 }
 
 async function loadAnalysisFilters() {
@@ -84,12 +98,16 @@ async function loadAnalysis() {
   const hours = parseInt(document.getElementById('aan-range-select').value) || 24;
   const now = Math.floor(Date.now() / 1000);
 
+  const sortBtns = document.querySelectorAll('#aan-top-sort .aan-sort-btn');
+  sortBtns.forEach(b => b.classList.toggle('active', b.dataset.sort === aanTopSort));
+
   try {
     const stats = await API.getAccessLogStats({
       site_id: siteId,
       relay_name: relayName,
       from: now - hours * 3600,
       to: now,
+      top_sort: aanTopSort,
     });
 
     const trend = stats.trend || [];
@@ -120,11 +138,11 @@ async function loadAnalysis() {
     drawTrendChart(trend, hours);
     renderStatusBars(status, totalReq);
     renderTopList('aan-paths', paths.map(p =>
-      p.is_other
-        ? [`<span style="color:var(--white-38)">${esc(p.path)}</span>`, p.count, p.bytes]
-        : [esc(p.path), p.count, p.bytes]));
-    renderTopList('aan-countries', (stats.regions || []).map(c => [c.code ? `${c.code} · ${esc(c.name)}` : esc(c.name), c.count, c.bytes]));
-    renderTopList('aan-orgs', (stats.orgs || []).map(o => [esc(o.name), o.count, o.bytes]));
+      ({ label: p.path, count: p.count, bytes: p.bytes, dim: !!p.is_other })));
+    renderTopList('aan-countries', (stats.regions || []).map(c =>
+      ({ label: c.code ? `${c.code} · ${c.name}` : c.name, count: c.count, bytes: c.bytes })));
+    renderTopList('aan-orgs', (stats.orgs || []).map(o =>
+      ({ label: o.name, count: o.count, bytes: o.bytes })));
     renderTopIPs(ips);
   } catch (e) {
     Toast.error('加载分析数据失败：' + e.message);
@@ -246,12 +264,25 @@ function renderStatusBars(status, totalReq) {
   `).join('');
 }
 
-// openStatusLogs jumps to the access log page pre-filtered by a status code.
+// openStatusLogs jumps to the access log page, carrying the current
+// site/node/time filters plus the clicked status code.
 function openStatusLogs(code) {
-  sessionStorage.setItem('alog_status', String(code));
+  const siteId = document.getElementById('aan-site-select')?.value || '';
+  const relayName = document.getElementById('aan-node-select')?.value || '';
+  const hours = parseInt(document.getElementById('aan-range-select')?.value || '24');
+  const now = Math.floor(Date.now() / 1000);
+  sessionStorage.setItem('alog_filter', JSON.stringify({
+    status: String(code),
+    site_id: siteId,
+    relay_name: relayName,
+    from: now - hours * 3600,
+    to: now,
+  }));
   location.hash = '#access-logs';
 }
 
+// renderTopList renders rows of {label, count, bytes, dim} objects. Labels are
+// plain text (escaped here) so no HTML/quote ever reaches attributes or cells.
 function renderTopList(tbodyId, rows) {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
@@ -259,15 +290,13 @@ function renderTopList(tbodyId, rows) {
     tbody.innerHTML = '<tr><td colspan="4" class="relay-empty">暂无数据</td></tr>';
     return;
   }
-  const total = rows.reduce((s, r) => s + (r[1] || 0), 0);
-  const cols = rows[0].length;
+  const total = rows.reduce((s, r) => s + (r.count || 0), 0);
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r[0]}">${r[0]}</td>
-      <td>${r[1]}</td>
-      <td>${total ? ((r[1] / total) * 100).toFixed(1) : 0}%</td>
-      <td>${formatBytes(r[2] || 0)}</td>
-      ${r[3] !== undefined ? `<td>${r[3]}</td>` : ''}
+      <td class="${r.dim ? 'top-dim' : ''}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.label)}">${esc(r.label)}</td>
+      <td>${r.count}</td>
+      <td>${total ? ((r.count / total) * 100).toFixed(1) : 0}%</td>
+      <td>${formatBytes(r.bytes || 0)}</td>
     </tr>
   `).join('');
 }
