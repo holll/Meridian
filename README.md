@@ -90,6 +90,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/instal
 # Relay：首次安装（交互输入 MASTER_URL、RELAY_TOKEN、RELAY_NAME）
 bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh) install
 
+# Relay：非交互安装（环境变量齐备时跳过交互；节点管理页「复制安装命令」可一键生成）
+bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh -o install-relay.sh) \
+  && chmod +x install-relay.sh \
+  && env MASTER_URL=https://panel.example.com RELAY_TOKEN=change-me RELAY_NAME=my-node \
+     ./install-relay.sh install
+
 # Relay：更新
 bash <(curl -fsSL https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh) update
 

@@ -41,9 +41,14 @@ function renderRelay() {
     <div class="glass-card fade-up stagger-4">
       <div class="glass-card-header">
         <div class="glass-card-title">节点列表</div>
-        <button class="btn-relay-refresh" id="btn-relay-refresh" title="刷新">
-          <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
+        <div style="display:flex;gap:8px">
+          <button class="btn-relay-refresh" id="btn-relay-install-cmd" title="复制新节点安装命令">
+            <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button class="btn-relay-refresh" id="btn-relay-refresh" title="刷新">
+            <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
       </div>
       <div id="relay-table-wrap" style="overflow-x:auto">
         <table>
@@ -58,12 +63,72 @@ function renderRelay() {
   `;
 
   document.getElementById('btn-relay-refresh').onclick = loadRelayNodes;
+  document.getElementById('btn-relay-install-cmd').onclick = showInstallCmdModal;
   loadRelayNodes();
 
   if (relayRefreshTimer) clearInterval(relayRefreshTimer);
   relayRefreshTimer = setInterval(() => {
     if (Router.current === 'relay') loadRelayNodes();
   }, 30000);
+}
+
+// showInstallCmdModal fetches the one-line install command and lets the
+// operator pick a node name before copying it to the clipboard.
+async function showInstallCmdModal() {
+  let command;
+  try {
+    const data = await API.getRelayInstallCmd();
+    command = data.command;
+  } catch (e) {
+    Toast.error(e.message);
+    return;
+  }
+
+  document.getElementById('modal-title').textContent = '安装新节点';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label>节点名称（全局唯一，如 Unicom-SH）</label>
+      <input type="text" class="form-input" id="relay-node-name" placeholder="如：Unicom-SH" maxlength="100" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="form-group">
+      <label>安装命令（随节点名称更新，点击复制）</label>
+      <textarea readonly class="form-input mono" id="relay-install-cmd" rows="4" style="font-size:.76rem;white-space:pre-wrap"></textarea>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn-modal secondary" id="relay-cmd-cancel">取消</button>
+    <button class="btn-modal primary" id="relay-cmd-copy">复制命令</button>`;
+
+  const nameInput = document.getElementById('relay-node-name');
+  const cmdArea = document.getElementById('relay-install-cmd');
+  const renderCmd = () => {
+    const name = nameInput.value.trim() || '__NODE__';
+    cmdArea.value = command.replace('__NODE__', name);
+  };
+  nameInput.addEventListener('input', renderCmd);
+  renderCmd();
+
+  document.getElementById('relay-cmd-cancel').addEventListener('click', closeModal);
+  document.getElementById('relay-cmd-copy').addEventListener('click', async () => {
+    await copyToClipboard(cmdArea.value);
+    closeModal();
+    Toast.success('安装命令已复制');
+  });
+
+  openModal({ closeOnBackdrop: true });
+  nameInput.focus();
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
 }
 
 function stopRelayRefresh() {

@@ -23,6 +23,14 @@ BIN_NAME="meridian-relay"
 ROOT_GROUP="${MERIDIAN_ROOT_GROUP:-$(id -gn 0 2>/dev/null || printf 'root')}"
 ASSUME_YES="${MERIDIAN_ASSUME_YES:-0}"
 
+# Relay node configuration — when all of MASTER_URL/RELAY_TOKEN/RELAY_NAME are
+# provided, installation runs non-interactively (supports -y / automation).
+MASTER_URL="${MASTER_URL:-}"
+RELAY_TOKEN="${RELAY_TOKEN:-}"
+RELAY_NAME="${RELAY_NAME:-}"
+RELAY_ISP="${RELAY_ISP:-}"
+RELAY_PORT="${RELAY_PORT:-9091}"
+
 PREVIOUS_BIN="${INSTALL_DIR}/${BIN_NAME}.previous"
 ROOT_PREFIX=()
 
@@ -165,26 +173,33 @@ env_file_path() { printf '%s/.env\n' "$DATA_DIR"; }
 
 prompt_relay_config() {
     local master_url relay_token relay_name relay_isp
-    if [ "$ASSUME_YES" = "1" ]; then
-        fail "Relay 首次安装需要交互输入，不支持 -y 模式"
+    if [ -n "$MASTER_URL" ] && [ -n "$RELAY_TOKEN" ] && [ -n "$RELAY_NAME" ]; then
+        master_url=$(printf '%s' "$MASTER_URL" | sed 's|/$||')
+        relay_token=$RELAY_TOKEN
+        relay_name=$RELAY_NAME
+        relay_isp=$RELAY_ISP
+        info "使用环境变量配置节点（MASTER_URL / RELAY_TOKEN / RELAY_NAME）"
+    else
+        [ "$ASSUME_YES" = "1" ] \
+            && fail "非交互模式缺少配置，请提供 MASTER_URL、RELAY_TOKEN、RELAY_NAME 环境变量"
+        printf '\n%s\n\n' "请配置 Relay 节点参数（首次安装必填）："
+        read -r -p "Master 面板地址（如 https://panel.example.com）: " master_url
+        master_url=$(printf '%s' "$master_url" | sed 's|/$||')
+        [ -n "$master_url" ] || fail "MASTER_URL 不能为空"
+        read -r -s -p "RELAY_TOKEN（与 Master 配置完全一致）: " relay_token
+        printf '\n'
+        [ -n "$relay_token" ] || fail "RELAY_TOKEN 不能为空"
+        read -r -p "节点名称（全局唯一，如 Unicom-SH）: " relay_name
+        [ -n "$relay_name" ] || fail "RELAY_NAME 不能为空"
+        read -r -p "运营商标识（可选，如 telecom/unicom/mobile/hk/oversea，回车跳过）: " relay_isp
     fi
-    printf '\n%s\n\n' "请配置 Relay 节点参数（首次安装必填）："
-    read -r -p "Master 面板地址（如 https://panel.example.com）: " master_url
-    master_url=$(printf '%s' "$master_url" | sed 's|/$||')
-    [ -n "$master_url" ] || fail "MASTER_URL 不能为空"
-    read -r -s -p "RELAY_TOKEN（与 Master 配置完全一致）: " relay_token
-    printf '\n'
-    [ -n "$relay_token" ] || fail "RELAY_TOKEN 不能为空"
-    read -r -p "节点名称（全局唯一，如 Unicom-SH）: " relay_name
-    [ -n "$relay_name" ] || fail "RELAY_NAME 不能为空"
-    read -r -p "运营商标识（可选，如 telecom/unicom/mobile/hk/oversea，回车跳过）: " relay_isp
 
     local env_file env_tmp
     env_file=$(env_file_path)
     env_tmp="${DATA_DIR}/.env.new"
     as_root install -d -o root -g root -m 0755 "$DATA_DIR"
     {
-        printf 'PORT=9091\n'
+        printf 'PORT=%s\n' "$RELAY_PORT"
         printf 'PANEL_BIND_ADDR=0.0.0.0\n'
         printf 'MASTER_URL=%s\n' "$master_url"
         printf 'RELAY_TOKEN=%s\n' "$relay_token"
@@ -363,12 +378,23 @@ Meridian Relay 一键安装工具
   install-relay.sh uninstall  卸载节点程序
   install-relay.sh help       显示本帮助
 
-环境变量:
+节点配置（环境变量，齐备时跳过交互输入）:
+  MASTER_URL              Master 面板地址，如 https://panel.example.com
+  RELAY_TOKEN             与 Master 配置完全一致的共享密钥
+  RELAY_NAME              节点名称（全局唯一）
+  RELAY_ISP               运营商标识（可选: telecom/unicom/mobile/hk/oversea）
+  RELAY_PORT              节点监听端口（默认 9091）
+
+安装参数:
   MERIDIAN_REPO           GitHub 仓库（默认从 git remote 自动检测或使用 holll/Meridian）
   MERIDIAN_INSTALL_DIR    二进制安装目录（默认 /usr/local/bin）
   MERIDIAN_DATA_DIR       数据/配置目录（默认 /opt/meridian-relay）
   MERIDIAN_SERVICE_FILE   systemd 服务文件路径（默认 /etc/systemd/system/meridian-relay.service）
-  MERIDIAN_ASSUME_YES=1   非交互模式（install 时仍需手动配置）
+  MERIDIAN_ASSUME_YES=1   非交互模式（需配合 MASTER_URL/RELAY_TOKEN/RELAY_NAME 使用）
+
+示例（非交互一行安装）:
+  env MASTER_URL=https://panel.example.com RELAY_TOKEN=xxx RELAY_NAME=my-node \
+      ./install-relay.sh install
 USAGE
 }
 

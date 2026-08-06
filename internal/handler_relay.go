@@ -194,3 +194,32 @@ func (a *App) handleRelayNodes(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
 }
+
+// handleRelayInstallCmd returns a one-line install command for a new relay
+// node, embedding the panel URL and shared RELAY_TOKEN. RELAY_NAME is left as
+// a placeholder (__NODE__) for the operator to fill in.
+// GET /api/relay/install-cmd
+func (a *App) handleRelayInstallCmd(c *gin.Context) {
+	if a.RelayToken == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "relay API not configured"})
+		return
+	}
+	masterURL := requestPanelURL(c)
+	command := "curl -L https://raw.githubusercontent.com/holll/Meridian/master/install-relay.sh -o install-relay.sh && chmod +x install-relay.sh && env MASTER_URL=" + masterURL + " RELAY_TOKEN=" + a.RelayToken + " RELAY_NAME=__NODE__ ./install-relay.sh install"
+	c.JSON(http.StatusOK, gin.H{
+		"master_url": masterURL,
+		"command":    command,
+	})
+}
+
+// requestPanelURL derives the panel's public origin from the request, honoring
+// X-Forwarded-Proto when the panel sits behind a TLS-terminating proxy.
+func requestPanelURL(c *gin.Context) string {
+	scheme := "http"
+	if proto := c.GetHeader("X-Forwarded-Proto"); proto == "https" || proto == "http" {
+		scheme = proto
+	} else if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + c.Request.Host
+}
