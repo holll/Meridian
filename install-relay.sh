@@ -261,7 +261,7 @@ health_url() {
     local port
     port=$(grep -E '^PORT=' "$(env_file_path)" 2>/dev/null | head -1 | cut -d= -f2 || printf '9091')
     [ -n "$port" ] || port="9091"
-    printf 'http://127.0.0.1:%s/healthz\n' "$port"
+    printf 'http://localhost:%s/healthz\n' "$port"
 }
 
 wait_for_health() {

@@ -264,7 +264,7 @@ read_config_port() {
 }
 
 health_url() {
-    printf 'http://127.0.0.1:%s/api/auth/check\n' "$(read_config_port)"
+    printf 'http://localhost:%s/api/auth/check\n' "$(read_config_port)"
 }
 
 wait_for_health() {
