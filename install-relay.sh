@@ -235,6 +235,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+ReadWritePaths=${INSTALL_DIR}
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
