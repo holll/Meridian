@@ -274,7 +274,7 @@ wait_for_health() {
         [ "$code" = "200" ] && return 0
         sleep 1
     done
-    # Relay 可能没有专用健康端点，进程存在即视为健康
+    # 进程存在且与 Master 心跳正常时 /healthz 返回 200；失联时降级 503
     is_systemd && systemctl is-active --quiet "$SERVICE_NAME" && return 0
     return 1
 }

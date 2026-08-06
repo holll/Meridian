@@ -20,6 +20,11 @@ import (
 
 var appVersion = "v1.6.0"
 
+// healthzStaleAfter is how long without a successful sync/heartbeat before
+// /healthz reports degraded (the node still proxies but is out of touch
+// with Master: config no longer refreshes, traffic cannot be reported).
+const healthzStaleAfter = 5 * time.Minute
+
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Println(appVersion)
@@ -93,6 +98,19 @@ func main() {
 	// routePrefix is read from the syncer on every request so it updates
 	// automatically after background syncs.
 	mux := http.NewServeMux()
+	// Health check on the same port (does not enter proxy access logs).
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		last := syncer.LastSyncOK()
+		status := "ok"
+		code := http.StatusOK
+		if last.IsZero() || time.Since(last) > healthzStaleAfter {
+			status = "degraded"
+			code = http.StatusServiceUnavailable
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		fmt.Fprintf(w, `{"status":%q,"last_sync":%d}`, status, last.Unix())
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		rp := syncer.RoutePrefix()
 		path := r.URL.Path

@@ -44,7 +44,8 @@ type Syncer struct {
 	httpClient  *http.Client
 	updater     *Updater
 	mu          sync.RWMutex
-	routePrefix string // learned from Master on first Sync()
+	routePrefix string    // learned from Master on first Sync()
+	lastSyncOK  time.Time // last successful sync/heartbeat; zero = never
 }
 
 // NewSyncer constructs a Syncer backed by the given ProxyManager.
@@ -65,6 +66,14 @@ func (s *Syncer) RoutePrefix() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.routePrefix
+}
+
+// LastSyncOK returns the time of the last successful sync or traffic
+// heartbeat (zero value when the Master was never reached).
+func (s *Syncer) LastSyncOK() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastSyncOK
 }
 
 // Run starts the sync/traffic-report loops and blocks until ctx is cancelled.
@@ -192,6 +201,9 @@ func (s *Syncer) Sync() {
 	}
 
 	s.pm.ApplyConfig(sites)
+	s.mu.Lock()
+	s.lastSyncOK = time.Now()
+	s.mu.Unlock()
 	log.Printf("[relay] synced %d sites, route_prefix=%q", len(sites), payload.RoutePrefix)
 }
 
@@ -227,6 +239,9 @@ func (s *Syncer) reportTraffic() {
 		log.Printf("[relay] update requested by master; starting self-update")
 		s.updater.UpdateAsync()
 	}
+	s.mu.Lock()
+	s.lastSyncOK = time.Now()
+	s.mu.Unlock()
 }
 
 // flushTraffic is a best-effort final traffic report on graceful shutdown.

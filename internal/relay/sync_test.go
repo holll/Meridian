@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"meridian/internal"
 )
@@ -85,6 +86,37 @@ func TestReportAccessLogsBatchesOverTheLimit(t *testing.T) {
 	}
 	if auth != "Bearer secret" {
 		t.Fatalf("authorization = %q, want Bearer secret", auth)
+	}
+}
+
+func TestSyncAndHeartbeatRecordLastSyncOK(t *testing.T) {
+	pm := internal.NewProxyManager(nil)
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/relay/sites":
+			w.Write([]byte(`{"route_prefix":"/s","sites":[]}`))
+		case "/api/relay/traffic":
+			w.Write([]byte(`{"ok":true}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer master.Close()
+
+	s := NewSyncer(Config{MasterURL: master.URL, RelayToken: "secret", RelayName: "node1"}, pm)
+	if !s.LastSyncOK().IsZero() {
+		t.Fatal("LastSyncOK must be zero before the first sync")
+	}
+
+	s.Sync()
+	if s.LastSyncOK().IsZero() {
+		t.Fatal("Sync() must record lastSyncOK")
+	}
+
+	s.lastSyncOK = time.Time{} // simulate a stale node
+	s.reportTraffic()
+	if s.LastSyncOK().IsZero() {
+		t.Fatal("successful heartbeat must refresh lastSyncOK")
 	}
 }
 
