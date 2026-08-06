@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meridian — Emby 反代管理面板</title>
 <meta name="description" content="Meridian 轻量级 Emby 反向代理管理面板">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1.24.0">
-<link rel="stylesheet" href="/css/style.css?v=1.24.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1.25.0">
+<link rel="stylesheet" href="/css/style.css?v=1.25.0">
 </head>
 <body>
 
@@ -49,7 +49,6 @@
     <div class="topnav-links">
       <a href="#dashboard" class="topnav-link active" data-page="dashboard">仪表盘</a>
       <a href="#sites" class="topnav-link" data-page="sites">站点管理</a>
-      <a href="#traffic" class="topnav-link" data-page="traffic">流量统计</a>
       <a href="#access-logs" class="topnav-link" data-page="access-logs">访问日志</a>
       <a href="#access-analysis" class="topnav-link" data-page="access-analysis">日志分析</a>
       <a href="#relay" class="topnav-link" data-page="relay">节点管理</a>
@@ -64,7 +63,6 @@
   <div class="main">
     <div id="page-dashboard" class="page active"></div>
     <div id="page-sites" class="page"></div>
-    <div id="page-traffic" class="page"></div>
     <div id="page-access-logs" class="page"></div>
     <div id="page-access-analysis" class="page"></div>
     <div id="page-relay" class="page"></div>
@@ -81,10 +79,6 @@
       <a href="#sites" class="mobile-tab" data-page="sites">
         <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         站点
-      </a>
-      <a href="#traffic" class="mobile-tab" data-page="traffic">
-        <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        流量
       </a>
       <a href="#relay" class="mobile-tab" data-page="relay">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -107,7 +101,6 @@
     <div class="sidebar-links">
       <a href="#dashboard" class="sidebar-link" data-page="dashboard">仪表盘</a>
       <a href="#sites" class="sidebar-link" data-page="sites">站点管理</a>
-      <a href="#traffic" class="sidebar-link" data-page="traffic">流量统计</a>
       <a href="#access-logs" class="sidebar-link" data-page="access-logs">访问日志</a>
       <a href="#access-analysis" class="sidebar-link" data-page="access-analysis">日志分析</a>
       <a href="#relay" class="sidebar-link" data-page="relay">节点管理</a>
@@ -133,16 +126,15 @@
 
 </div>
 
-<script src="/js/api.js?v=1.24.0"></script>
-<script src="/js/toast.js?v=1.24.0"></script>
-<script src="/js/router.js?v=1.24.0"></script>
-<script src="/js/pages/dashboard.js?v=1.24.0"></script>
-<script src="/js/pages/sites.js?v=1.24.0"></script>
-<script src="/js/pages/traffic.js?v=1.24.0"></script>
-<script src="/js/pages/access_logs.js?v=1.24.0"></script>
-<script src="/js/pages/access_analysis.js?v=1.24.0"></script>
-<script src="/js/pages/relay.js?v=1.24.0"></script>
-<script src="/js/pages/diag.js?v=1.24.0"></script>
-<script src="/js/app.js?v=1.24.0"></script>
+<script src="/js/api.js?v=1.25.0"></script>
+<script src="/js/toast.js?v=1.25.0"></script>
+<script src="/js/router.js?v=1.25.0"></script>
+<script src="/js/pages/dashboard.js?v=1.25.0"></script>
+<script src="/js/pages/sites.js?v=1.25.0"></script>
+<script src="/js/pages/access_logs.js?v=1.25.0"></script>
+<script src="/js/pages/access_analysis.js?v=1.25.0"></script>
+<script src="/js/pages/relay.js?v=1.25.0"></script>
+<script src="/js/pages/diag.js?v=1.25.0"></script>
+<script src="/js/app.js?v=1.25.0"></script>
 </body>
 </html>

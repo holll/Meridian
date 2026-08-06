@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,64 +19,6 @@ func (a *App) handleDashboard(c *gin.Context) {
 	}
 	stats["running_sites"] = a.PM.GetRunningCount()
 	c.JSON(http.StatusOK, stats)
-}
-
-// GET /api/traffic/overview
-func (a *App) trafficOverview(c *gin.Context) {
-	stats, err := a.DB.DashboardStats()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "traffic overview unavailable"})
-		return
-	}
-	c.JSON(http.StatusOK, stats)
-}
-
-// GET /api/traffic/:site_id
-func (a *App) siteTraffic(c *gin.Context) {
-	siteID, err := strconv.ParseInt(c.Param("site_id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid site id"})
-		return
-	}
-	hours := 24
-	if h := c.Query("hours"); h != "" {
-		if v, err := strconv.Atoi(h); err == nil && v >= 1 && v <= 24*366 {
-			hours = v
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "hours must be between 1 and 8784"})
-			return
-		}
-	}
-	logs, err := a.DB.GetTrafficLogs(siteID, hours)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, logs)
-}
-
-// GET /api/traffic/:site_id/daily
-func (a *App) siteDailyTraffic(c *gin.Context) {
-	siteID, err := strconv.ParseInt(c.Param("site_id"), 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid site id"})
-		return
-	}
-	days := 30
-	if q := c.Query("days"); q != "" {
-		if v, err := strconv.Atoi(q); err == nil && v >= 1 && v <= 365 {
-			days = v
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be between 1 and 365"})
-			return
-		}
-	}
-	logs, err := a.DB.GetDailyTrafficLogs(siteID, days)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, logs)
 }
 
 // GET /api/ua-profiles

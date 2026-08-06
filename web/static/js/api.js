@@ -52,10 +52,6 @@ const API = {
   toggleSite(id) { return this.request('POST', '/api/sites/' + id + '/toggle'); },
   diagSite(id) { return this.request('GET', '/api/sites/' + id + '/diag'); },
 
-  // Traffic
-  getTraffic(siteId, hours) { return this.request('GET', '/api/traffic/' + siteId + '?hours=' + (hours || 24)); },
-  getDailyTraffic(siteId, days) { return this.request('GET', '/api/traffic/' + siteId + '/daily?days=' + (days || 30)); },
-
   // Relay Nodes
   getRelayNodes() { return this.request('GET', '/api/relay/nodes'); },
   getRelayInstallCmd() { return this.request('GET', '/api/relay/install-cmd'); },

@@ -334,14 +334,6 @@ type Site struct {
 	UpdatedAt         string `json:"updated_at"`
 }
 
-type TrafficLog struct {
-	ID         int64  `json:"id"`
-	SiteID     int64  `json:"site_id"`
-	BytesIn    int64  `json:"bytes_in"`
-	BytesOut   int64  `json:"bytes_out"`
-	RecordedAt string `json:"recorded_at"`
-}
-
 func (d *DB) UserCount() (int, error) {
 	var n int
 	if err := d.DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&n); err != nil {
@@ -630,69 +622,6 @@ func (d *DB) addTraffic(siteID, bytesIn, bytesOut int64) error {
 	}
 
 	return tx.Commit()
-}
-
-func (d *DB) GetTrafficLogs(siteID int64, hours int) ([]TrafficLog, error) {
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).Format("2006-01-02 15:04:05")
-	rows, err := d.DB.Query(
-		"SELECT id, site_id, bytes_in, bytes_out, recorded_at FROM traffic_logs WHERE site_id=? AND recorded_at>=? ORDER BY recorded_at",
-		siteID, since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var logs []TrafficLog
-	for rows.Next() {
-		var l TrafficLog
-		if err := rows.Scan(&l.ID, &l.SiteID, &l.BytesIn, &l.BytesOut, &l.RecordedAt); err != nil {
-			return nil, err
-		}
-		logs = append(logs, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if logs == nil {
-		logs = []TrafficLog{}
-	}
-	return logs, nil
-}
-
-// DailyTrafficLog holds aggregated traffic for a single calendar day.
-type DailyTrafficLog struct {
-	Date     string `json:"date"`
-	BytesIn  int64  `json:"bytes_in"`
-	BytesOut int64  `json:"bytes_out"`
-}
-
-func (d *DB) GetDailyTrafficLogs(siteID int64, days int) ([]DailyTrafficLog, error) {
-	since := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
-	rows, err := d.DB.Query(
-		`SELECT DATE(recorded_at) AS day, SUM(bytes_in), SUM(bytes_out)
-		 FROM traffic_logs WHERE site_id=? AND DATE(recorded_at)>=?
-		 GROUP BY day ORDER BY day`,
-		siteID, since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var logs []DailyTrafficLog
-	for rows.Next() {
-		var l DailyTrafficLog
-		if err := rows.Scan(&l.Date, &l.BytesIn, &l.BytesOut); err != nil {
-			return nil, err
-		}
-		logs = append(logs, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if logs == nil {
-		logs = []DailyTrafficLog{}
-	}
-	return logs, nil
 }
 
 // RelayNode represents a registered relay node.

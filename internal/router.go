@@ -40,11 +40,6 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		auth.POST("/sites/:id/toggle", app.toggleSite)
 		auth.GET("/sites/:id/diag", app.diagSite)
 
-		// Traffic
-		auth.GET("/traffic/overview", app.trafficOverview)
-		auth.GET("/traffic/:site_id", app.siteTraffic)
-		auth.GET("/traffic/:site_id/daily", app.siteDailyTraffic)
-
 		// Access logs
 		auth.GET("/access_logs", app.handleAccessLogs)
 		auth.GET("/access_logs/stats", app.handleAccessLogStats)

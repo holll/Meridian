@@ -227,15 +227,18 @@ func TestAddTrafficAggregatesSameHour(t *testing.T) {
 	app.DB.AddTraffic(site.ID, 10, 20)
 	app.DB.AddTraffic(site.ID, 5, 7)
 
-	logs, err := app.DB.GetTrafficLogs(site.ID, 1)
-	if err != nil {
-		t.Fatalf("GetTrafficLogs: %v", err)
+	var count int
+	var bytesIn, bytesOut int64
+	if err := app.DB.DB.QueryRow(
+		"SELECT COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0) FROM traffic_logs WHERE site_id=?", site.ID,
+	).Scan(&count, &bytesIn, &bytesOut); err != nil {
+		t.Fatalf("query traffic_logs: %v", err)
 	}
-	if len(logs) != 1 {
-		t.Fatalf("len(logs) = %d, want 1", len(logs))
+	if count != 1 {
+		t.Fatalf("rows = %d, want 1 (same-hour upsert)", count)
 	}
-	if logs[0].BytesIn != 15 || logs[0].BytesOut != 27 {
-		t.Fatalf("aggregated log = in:%d out:%d", logs[0].BytesIn, logs[0].BytesOut)
+	if bytesIn != 15 || bytesOut != 27 {
+		t.Fatalf("aggregated = in:%d out:%d, want 15/27", bytesIn, bytesOut)
 	}
 }
 

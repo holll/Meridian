@@ -188,7 +188,6 @@
     if (!appBootstrapped) {
       Router.register('dashboard', renderDashboard);
       Router.register('sites', renderSites);
-      Router.register('traffic', renderTraffic);
       Router.register('access-logs', renderAccessLogs);
       Router.register('access-analysis', renderAccessAnalysis);
       Router.register('relay', renderRelay);
