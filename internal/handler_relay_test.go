@@ -160,6 +160,45 @@ func TestHandleRelayNodeUpdateSignalsNextHeartbeat(t *testing.T) {
 	}
 }
 
+func TestHandleRelayNodeDelete(t *testing.T) {
+	app := newTestApp(t)
+	app.RelayToken = "relay-secret"
+	router := setupTestRouter(app)
+	token := createTestAdmin(t, app)
+
+	// Register a node via the relay API, then delete it from the panel.
+	req := httptest.NewRequest(http.MethodPost, "/api/relay/nodes/register",
+		strings.NewReader(`{"name":"old-name","version":"v2.5.0"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer relay-secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("register status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodDelete, "/api/relay/nodes/old-name", nil), token))
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	nodes, err := app.DB.GetRelayNodes()
+	if err != nil {
+		t.Fatalf("GetRelayNodes: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("nodes after delete = %d, want 0", len(nodes))
+	}
+
+	// Unauthenticated delete is rejected.
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/relay/nodes/old-name", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated delete status = %d, want 401", w.Code)
+	}
+}
+
 func TestHandleRelayNodesReturnsEmptyList(t *testing.T) {
 	app := newTestApp(t)
 	router := setupTestRouter(app)

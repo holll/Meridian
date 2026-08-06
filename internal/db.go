@@ -650,6 +650,13 @@ func (d *DB) RegisterRelayNode(name, isp, publicIP, version string, now int64) e
 	return err
 }
 
+// DeleteRelayNode removes a node registration. Access logs are kept for
+// audit (relay_name is a plain column, not a foreign key).
+func (d *DB) DeleteRelayNode(name string) error {
+	_, err := d.DB.Exec("DELETE FROM relay_nodes WHERE name = ?", name)
+	return err
+}
+
 // TouchRelayNode updates last_seen for an existing relay node.
 func (d *DB) TouchRelayNode(name string, now int64) {
 	_, _ = d.DB.Exec("UPDATE relay_nodes SET last_seen=? WHERE name=?", now, name)

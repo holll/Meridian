@@ -129,6 +129,29 @@ window.updateRelayNode = async function(name) {
   }
 };
 
+// confirmDeleteRelayNode removes a node registration (e.g. after renaming it).
+window.confirmDeleteRelayNode = function(name) {
+  document.getElementById('modal-title').textContent = '删除节点';
+  document.getElementById('modal-body').innerHTML = `
+    <p>确定删除节点 <b>${esc(name)}</b> 吗？</p>
+    <p style="color:var(--white-38);font-size:.85rem;margin-top:8px">仅删除注册信息，历史访问日志保留。节点重新上线（下次心跳）会自动重新注册。</p>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn-modal secondary" id="relay-del-cancel">取消</button>
+    <button class="btn-modal primary" id="relay-del-confirm" style="background:var(--red)">删除</button>`;
+  document.getElementById('relay-del-cancel').addEventListener('click', closeModal);
+  document.getElementById('relay-del-confirm').addEventListener('click', async () => {
+    try {
+      await API.deleteRelayNode(name);
+      closeModal();
+      Toast.success('节点已删除');
+      loadRelayNodes();
+    } catch (e) {
+      Toast.error('删除失败：' + e.message);
+    }
+  });
+  openModal({ closeOnBackdrop: true });
+};
+
 async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -197,9 +220,16 @@ async function loadRelayNodes() {
           <span class="status-led ${online ? 'on' : 'off'}"></span>
           ${online ? '在线' : '离线'}
         </span></td>
-        <td><button class="btn-relay-refresh" title="一键更新此节点（节点将在下次心跳时执行）" onclick="updateRelayNode('${esc(n.name)}')">
-          <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button></td>
+        <td>
+          <div style="display:flex;gap:6px">
+            <button class="btn-relay-refresh" title="一键更新此节点（节点将在下次心跳时执行）" onclick="updateRelayNode('${esc(n.name)}')">
+              <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+            <button class="btn-relay-refresh" title="删除此节点注册（改名后请删除旧名称记录）" onclick="confirmDeleteRelayNode('${esc(n.name)}')" style="color:var(--red)">
+              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </td>
       </tr>`;
     }).join('');
   } catch (e) {

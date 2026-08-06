@@ -232,6 +232,21 @@ func (a *App) handleRelayRegister(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// handleRelayNodeDelete removes a node registration from the panel.
+// DELETE /api/relay/nodes/:name
+func (a *App) handleRelayNodeDelete(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	if err := a.DB.DeleteRelayNode(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete relay node"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // handleRelayNodes lists all relay nodes for the management panel.
 // GET /api/relay/nodes
 func (a *App) handleRelayNodes(c *gin.Context) {

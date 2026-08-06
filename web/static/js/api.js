@@ -56,6 +56,7 @@ const API = {
   getRelayNodes() { return this.request('GET', '/api/relay/nodes'); },
   getRelayInstallCmd() { return this.request('GET', '/api/relay/install-cmd'); },
   updateRelayNode(name) { return this.request('POST', '/api/relay/nodes/update', { name }); },
+  deleteRelayNode(name) { return this.request('DELETE', '/api/relay/nodes/' + encodeURIComponent(name)); },
 
   // Access Logs
   getAccessLogs(params) { return this.request('GET', '/api/access_logs?' + qs(params)); },

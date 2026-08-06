@@ -48,6 +48,7 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		auth.GET("/relay/nodes", app.handleRelayNodes)
 		auth.GET("/relay/install-cmd", app.handleRelayInstallCmd)
 		auth.POST("/relay/nodes/update", app.handleRelayNodeUpdate)
+		auth.DELETE("/relay/nodes/:name", app.handleRelayNodeDelete)
 
 		// Misc
 		auth.GET("/ua-profiles", app.handleUAProfiles)
