@@ -80,6 +80,8 @@ func (u *Updater) Update() error {
 	}
 	log.Printf("[relay] self-updated to %s, restarting in place", version)
 
+	// #nosec G702,G204 -- exec swaps in the SHA-256-verified release binary;
+	// the path comes from os.Executable(), never from request input.
 	return syscall.Exec(exe, os.Args, os.Environ())
 }
 
