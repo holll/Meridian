@@ -1066,7 +1066,9 @@ canvas#trafficChart { width: 100% !important; height: 280px !important; }
   top: 0; left: 0; bottom: 0;
   width: 264px;
   max-width: 82vw;
-  background: var(--surface);
+  background: rgba(26,26,26,.9); /* frosted glass drawer; --surface is too transparent for a drawer */
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border-right: 1px solid var(--glass-border);
   z-index: 1200;
   transform: translateX(-100%);
