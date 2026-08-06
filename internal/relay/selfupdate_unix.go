@@ -68,6 +68,9 @@ func (u *Updater) Update() error {
 	if err := tmp.Chmod(0755); err != nil {
 		return err
 	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
 
 	// Swap with the previous binary kept aside for manual rollback.
 	prev := exe + ".previous"
@@ -114,7 +117,7 @@ func (u *Updater) latestVersion() (string, error) {
 }
 
 // downloadAndVerify streams binURL into w and checks its SHA-256 against the
-// checksum file hosted next to it.
+// checksum file hosted next to it. The caller owns w (chmod/close/rename).
 func (u *Updater) downloadAndVerify(binURL, sumsURL, asset string, w *os.File) error {
 	resp, err := u.HTTPClient.Get(binURL)
 	if err != nil {
@@ -126,9 +129,6 @@ func (u *Updater) downloadAndVerify(binURL, sumsURL, asset string, w *os.File) e
 	}
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(w, h), resp.Body); err != nil {
-		return err
-	}
-	if err := w.Close(); err != nil {
 		return err
 	}
 	actual := hex.EncodeToString(h.Sum(nil))
