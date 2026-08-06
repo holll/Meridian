@@ -15,8 +15,8 @@ if [ -z "$REPO" ]; then
 fi
 [ -n "$REPO" ] || REPO="holll/Meridian"
 
-INSTALL_DIR="${MERIDIAN_INSTALL_DIR:-/usr/local/bin}"
-DATA_DIR="${MERIDIAN_DATA_DIR:-/opt/meridian-relay}"
+INSTALL_DIR="${MERIDIAN_INSTALL_DIR:-/opt/meridian/relay}"
+DATA_DIR="${MERIDIAN_DATA_DIR:-/opt/meridian/relay}"
 SERVICE_FILE="${MERIDIAN_SERVICE_FILE:-/etc/systemd/system/meridian-relay.service}"
 SERVICE_NAME="${MERIDIAN_SERVICE_NAME:-meridian-relay}"
 BIN_NAME="meridian-relay"
@@ -232,6 +232,20 @@ ExecStart=${INSTALL_DIR}/${BIN_NAME}
 WorkingDirectory=${DATA_DIR}
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+CapabilityBoundingSet=
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
 LimitNOFILE=65536
 
 [Install]
@@ -387,8 +401,8 @@ Meridian Relay 一键安装工具
 
 安装参数:
   MERIDIAN_REPO           GitHub 仓库（默认从 git remote 自动检测或使用 holll/Meridian）
-  MERIDIAN_INSTALL_DIR    二进制安装目录（默认 /usr/local/bin）
-  MERIDIAN_DATA_DIR       数据/配置目录（默认 /opt/meridian-relay）
+  MERIDIAN_INSTALL_DIR    二进制安装目录（默认 /opt/meridian/relay）
+  MERIDIAN_DATA_DIR       数据/配置目录（默认 /opt/meridian/relay）
   MERIDIAN_SERVICE_FILE   systemd 服务文件路径（默认 /etc/systemd/system/meridian-relay.service）
   MERIDIAN_ASSUME_YES=1   非交互模式（需配合 MASTER_URL/RELAY_TOKEN/RELAY_NAME 使用）
 
