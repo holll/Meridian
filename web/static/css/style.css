@@ -1284,7 +1284,11 @@ canvas#trafficChart { width: 100% !important; height: 280px !important; }
   padding: 12px 14px;
   border-radius: 10px;
   background: rgba(255,255,255,.04);
+  cursor: pointer;
+  transition: background .15s, transform .15s;
 }
+.aan-status-item:hover { background: rgba(255,255,255,.08); transform: translateY(-1px); }
+.aan-status-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 .aan-status-head {
   display: flex;

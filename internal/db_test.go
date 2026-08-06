@@ -324,7 +324,7 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Filter by site: 3 rows for site.ID, all joined with the site name.
-	logs, total, err := app.DB.QueryAccessLogs(site.ID, "", 0, 0, 1, 50)
+	logs, total, err := app.DB.QueryAccessLogs(site.ID, "", 0, 0, 0, 1, 50)
 	if err != nil {
 		t.Fatalf("QueryAccessLogs: %v", err)
 	}
@@ -338,14 +338,14 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Filter by relay name.
-	_, total, err = app.DB.QueryAccessLogs(0, "node1", 0, 0, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "node1", 0, 0, 0, 1, 50)
 	if err != nil {
 		t.Fatalf("relay filter: %v", err)
 	}
 	if total != 4 {
 		t.Fatalf("relay filter total = %d, want 4", total)
 	}
-	_, total, err = app.DB.QueryAccessLogs(0, "missing", 0, 0, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "missing", 0, 0, 0, 1, 50)
 	if err != nil {
 		t.Fatalf("relay miss: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	}
 
 	// Time window: [base-150, base-50] covers the two newest rows.
-	_, total, err = app.DB.QueryAccessLogs(0, "", base-150, base+50, 1, 50)
+	_, total, err = app.DB.QueryAccessLogs(0, "", base-150, base+50, 0, 1, 50)
 	if err != nil {
 		t.Fatalf("time filter: %v", err)
 	}
@@ -362,8 +362,24 @@ func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 		t.Fatalf("time window total = %d, want 2", total)
 	}
 
+	// Filter by status code: one 404 row, two 200 rows.
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 404, 1, 50)
+	if err != nil {
+		t.Fatalf("status filter: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("status 404 total = %d, want 1", total)
+	}
+	_, total, err = app.DB.QueryAccessLogs(0, "", 0, 0, 200, 1, 50)
+	if err != nil {
+		t.Fatalf("status filter 200: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("status 200 total = %d, want 2", total)
+	}
+
 	// Pagination: newest first, page 2 of page size 2.
-	pageLogs, total, err := app.DB.QueryAccessLogs(0, "", 0, 0, 2, 2)
+	pageLogs, total, err := app.DB.QueryAccessLogs(0, "", 0, 0, 0, 2, 2)
 	if err != nil {
 		t.Fatalf("paged query: %v", err)
 	}

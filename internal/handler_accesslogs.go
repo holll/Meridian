@@ -55,9 +55,13 @@ func parseAccessLogFilters(c *gin.Context) (siteID, from, to int64, relayName st
 }
 
 // handleAccessLogs returns a paginated list of access logs for the management panel.
-// GET /api/access_logs?site_id=&relay_name=&from=&to=&page=&page_size=
+// GET /api/access_logs?site_id=&relay_name=&status=&from=&to=&page=&page_size=
 func (a *App) handleAccessLogs(c *gin.Context) {
 	siteID, from, to, relayName := parseAccessLogFilters(c)
+	var status int
+	if v := c.Query("status"); v != "" {
+		status, _ = strconv.Atoi(v)
+	}
 	page := 1
 	if v := c.Query("page"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil && p > 0 {
@@ -74,7 +78,7 @@ func (a *App) handleAccessLogs(c *gin.Context) {
 		pageSize = 200
 	}
 
-	logs, total, err := a.DB.QueryAccessLogs(siteID, relayName, from, to, page, pageSize)
+	logs, total, err := a.DB.QueryAccessLogs(siteID, relayName, from, to, status, page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query access logs"})
 		return

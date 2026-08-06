@@ -230,7 +230,8 @@ function renderStatusBars(status, totalReq) {
   const maxCount = Math.max(1, ...status.map(s => s.count));
   const statusName = code => code >= 500 ? '服务端错误' : code >= 400 ? '客户端错误' : code >= 300 ? '重定向' : code >= 200 ? '成功' : '其他';
   el.innerHTML = status.map(s => `
-    <div class="aan-status-item">
+    <div class="aan-status-item" role="button" tabindex="0" title="查看所有 ${s.status} 请求"
+         onclick="openStatusLogs(${s.status})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStatusLogs(${s.status})}">
       <div class="aan-status-head">
         <span class="aan-status-dot" style="background:${statusColor(s.status)}"></span>
         <span class="alog-status" style="color:${statusColor(s.status)}">${s.status}</span>
@@ -243,6 +244,12 @@ function renderStatusBars(status, totalReq) {
       <div class="aan-status-bar"><div class="aan-status-fill" style="width:${(s.count / maxCount * 100).toFixed(1)}%;background:${statusColor(s.status)}"></div></div>
     </div>
   `).join('');
+}
+
+// openStatusLogs jumps to the access log page pre-filtered by a status code.
+function openStatusLogs(code) {
+  sessionStorage.setItem('alog_status', String(code));
+  location.hash = '#access-logs';
 }
 
 function renderTopList(tbodyId, rows) {

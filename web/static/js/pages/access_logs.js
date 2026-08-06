@@ -13,6 +13,7 @@ function renderAccessLogs() {
     <div class="controls-row fade-up stagger-1">
       <select class="form-select" id="alog-site-select"><option value="">全部站点</option></select>
       <select class="form-select" id="alog-node-select"><option value="">全部节点</option></select>
+      <input type="number" min="100" max="599" class="form-input" id="alog-status-input" placeholder="状态码（如 502）" style="width:150px" title="按状态码筛选，留空为全部">
       <button class="btn-login" id="btn-alog-refresh" style="width:auto;padding:8px 18px">刷新</button>
     </div>
     <div class="glass-card fade-up stagger-2">
@@ -35,7 +36,15 @@ function renderAccessLogs() {
 
   document.getElementById('alog-site-select').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
   document.getElementById('alog-node-select').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
+  document.getElementById('alog-status-input').onchange = () => { accessLogPage = 1; loadAccessLogs(); };
   document.getElementById('btn-alog-refresh').onclick = () => loadAccessLogs(false);
+
+  // Consume a status code linked from the analysis page (e.g. click on 502).
+  const linkedStatus = sessionStorage.getItem('alog_status');
+  if (linkedStatus) {
+    sessionStorage.removeItem('alog_status');
+    document.getElementById('alog-status-input').value = linkedStatus;
+  }
 
   loadAccessLogFilters();
   loadAccessLogs();
@@ -84,12 +93,14 @@ async function loadAccessLogs(silent) {
   scheduleAccessLogRefresh(); // any load restarts the auto-refresh countdown
   const siteId = document.getElementById('alog-site-select').value;
   const relayName = document.getElementById('alog-node-select').value;
+  const status = document.getElementById('alog-status-input').value.trim();
   const seq = ++accessLogLoadSeq;
 
   try {
     const data = await API.getAccessLogs({
       site_id: siteId,
       relay_name: relayName,
+      status: status,
       page: accessLogPage,
       page_size: 50,
     });

@@ -899,10 +899,14 @@ func accessLogWhere(siteID int64, relayName string, from, to int64) (string, []i
 }
 
 // QueryAccessLogs returns a page of access logs matching the given filters
-// (siteID/relayName may be 0/"" for "any"), ordered newest first, plus the
-// total count for pagination.
-func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, page, pageSize int) ([]AccessLogRow, int64, error) {
+// (siteID/relayName may be 0/"" for "any", status 0 for "any"), ordered
+// newest first, plus the total count for pagination.
+func (d *DB) QueryAccessLogs(siteID int64, relayName string, from, to int64, status, page, pageSize int) ([]AccessLogRow, int64, error) {
 	where, args := accessLogWhere(siteID, relayName, from, to)
+	if status > 0 {
+		where += " AND l.status = ?"
+		args = append(args, status)
+	}
 
 	var total int64
 	if err := d.DB.QueryRow("SELECT COUNT(*) FROM access_logs l WHERE "+where, args...).Scan(&total); err != nil {
