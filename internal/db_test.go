@@ -281,6 +281,31 @@ func TestAddAccessLogsInsertsAndPrunesRetention(t *testing.T) {
 	}
 }
 
+func TestAddAccessLogsSkipsFilteredPaths(t *testing.T) {
+	app := newTestApp(t)
+	now := time.Now().Unix()
+	if err := app.DB.AddAccessLogs("node1", []AccessLogEntry{
+		{Timestamp: now, SiteID: 1, ClientIP: "1.2.3.4", Method: "POST", Path: "/emby/Sessions/Playing/Progress", Status: 204, LatencyMs: 5, BytesOut: 10},
+		{Timestamp: now, SiteID: 1, ClientIP: "1.2.3.4", Method: "GET", Path: "/emby/Videos/1/stream", Status: 200, LatencyMs: 5, BytesOut: 10},
+	}); err != nil {
+		t.Fatalf("AddAccessLogs: %v", err)
+	}
+	var count int
+	if err := app.DB.DB.QueryRow("SELECT COUNT(*) FROM access_logs").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("access_logs rows = %d, want 1 (progress path filtered)", count)
+	}
+	var path string
+	if err := app.DB.DB.QueryRow("SELECT path FROM access_logs").Scan(&path); err != nil {
+		t.Fatalf("query surviving row: %v", err)
+	}
+	if path != "/emby/Videos/1/stream" {
+		t.Fatalf("surviving path = %q, want stream path", path)
+	}
+}
+
 func TestQueryAccessLogsFiltersAndPagination(t *testing.T) {
 	app := newTestApp(t)
 	site, err := app.DB.CreateSite("emby", "/s/emby", "http://127.0.0.1:8096", "", "direct", "[]", "infuse", 0, 0)

@@ -841,6 +841,9 @@ func (d *DB) AddAccessLogs(relayName string, logs []AccessLogEntry) error {
 	}
 	defer stmt.Close()
 	for _, l := range logs {
+		if accessLogPathFiltered(l.Path) {
+			continue
+		}
 		if _, err := stmt.Exec(relayName, l.SiteID, l.ClientIP, l.Method, l.Path, l.Status, l.LatencyMs, l.BytesIn, l.BytesOut, l.Timestamp); err != nil {
 			return err
 		}

@@ -4,6 +4,20 @@ import (
 	"sync"
 )
 
+// accessLogFilteredPaths are high-frequency request paths excluded from access
+// log storage and analysis (e.g. Jellyfin playback progress polling).
+var accessLogFilteredPaths = []string{"/emby/Sessions/Playing/Progress"}
+
+// accessLogPathFiltered reports whether a request path is excluded from logs.
+func accessLogPathFiltered(path string) bool {
+	for _, p := range accessLogFilteredPaths {
+		if path == p {
+			return true
+		}
+	}
+	return false
+}
+
 // AccessLogEntry is a single request access log record reported by a relay node.
 type AccessLogEntry struct {
 	Timestamp int64  `json:"timestamp"` // unix seconds
