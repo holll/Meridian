@@ -54,9 +54,9 @@ function renderRelay() {
         <table>
           <thead><tr>
             <th>节点名称</th><th>运营商</th><th>公网 IP</th><th>版本</th>
-            <th>最后心跳</th><th>流量入</th><th>流量出</th><th>状态</th>
+            <th>最后心跳</th><th>流量入</th><th>流量出</th><th>状态</th><th>操作</th>
           </tr></thead>
-          <tbody id="relay-table"><tr><td colspan="8" class="relay-loading">加载中...</td></tr></tbody>
+          <tbody id="relay-table"><tr><td colspan="9" class="relay-loading">加载中...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -118,6 +118,17 @@ async function showInstallCmdModal() {
   nameInput.focus();
 }
 
+// updateRelayNode sends a one-shot self-update signal to a node; the node
+// performs the update on its next heartbeat (60s).
+window.updateRelayNode = async function(name) {
+  try {
+    await API.updateRelayNode(name);
+    Toast.success('更新指令已下发，节点将在下次心跳时执行（约 1 分钟内）');
+  } catch (e) {
+    Toast.error('下发失败：' + e.message);
+  }
+};
+
 async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -162,7 +173,7 @@ async function loadRelayNodes() {
     if (!tbody) return;
 
     if (nodes.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="relay-empty">暂无注册节点。部署 meridian-relay 后节点将自动出现在此处。</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="relay-empty">暂无注册节点。部署 meridian-relay 后节点将自动出现在此处。</td></tr>';
       return;
     }
 
@@ -186,6 +197,9 @@ async function loadRelayNodes() {
           <span class="status-led ${online ? 'on' : 'off'}"></span>
           ${online ? '在线' : '离线'}
         </span></td>
+        <td><button class="btn-relay-refresh" title="一键更新此节点（节点将在下次心跳时执行）" onclick="updateRelayNode('${esc(n.name)}')">
+          <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button></td>
       </tr>`;
     }).join('');
   } catch (e) {

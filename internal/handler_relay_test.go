@@ -93,6 +93,73 @@ func TestHandleRelayInstallCmd(t *testing.T) {
 	})
 }
 
+func TestHandleRelayNodeUpdateSignalsNextHeartbeat(t *testing.T) {
+	app := newTestApp(t)
+	app.RelayToken = "relay-secret"
+	router := setupTestRouter(app)
+	token := createTestAdmin(t, app)
+
+	// Panel endpoint requires JWT.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/relay/nodes/update",
+		strings.NewReader(`{"name":"node1"}`)))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", w.Code)
+	}
+
+	// Missing name is rejected.
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodPost, "/api/relay/nodes/update",
+		strings.NewReader(`{}`)), token))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty name status = %d, want 400", w.Code)
+	}
+
+	// Request an update for node1.
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodPost, "/api/relay/nodes/update",
+		strings.NewReader(`{"name":"node1"}`)), token))
+	if w.Code != http.StatusOK {
+		t.Fatalf("request update status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	heartbeat := func() map[string]interface{} {
+		req := httptest.NewRequest(http.MethodPost, "/api/relay/traffic",
+			strings.NewReader(`{"relay_name":"node1","timestamp":12345,"sites":[]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer relay-secret")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("heartbeat status = %d body=%s", w.Code, w.Body.String())
+		}
+		return decodeBody(t, w)
+	}
+
+	// The node's next heartbeat carries the update flag; the signal is
+	// consumed, so the following heartbeat does not.
+	body := heartbeat()
+	if got, ok := body["update"].(bool); !ok || !got {
+		t.Fatalf("first heartbeat update = %#v, want true", body["update"])
+	}
+	body = heartbeat()
+	if got, ok := body["update"].(bool); !ok || got {
+		t.Fatalf("second heartbeat update = %#v, want false", body["update"])
+	}
+
+	// A different node is unaffected.
+	req := httptest.NewRequest(http.MethodPost, "/api/relay/traffic",
+		strings.NewReader(`{"relay_name":"node2","timestamp":12345,"sites":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer relay-secret")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	body = decodeBody(t, w)
+	if got, ok := body["update"].(bool); !ok || got {
+		t.Fatalf("other node update = %#v, want false", body["update"])
+	}
+}
+
 func TestHandleRelayNodesReturnsEmptyList(t *testing.T) {
 	app := newTestApp(t)
 	router := setupTestRouter(app)

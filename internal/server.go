@@ -23,7 +23,8 @@ type App struct {
 	loginLimiter    *loginRateLimiter
 	limiterOnce     sync.Once
 	TrustedProxies  []*net.IPNet
-	GeoLite         *GeoLite // IP geolocation/ASN lookup; nil when unavailable
+	GeoLite         *GeoLite           // IP geolocation/ASN lookup; nil when unavailable
+	UpdateRequests  UpdateRequestStore // one-shot relay self-update requests
 }
 
 const (

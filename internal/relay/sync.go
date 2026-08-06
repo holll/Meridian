@@ -42,6 +42,7 @@ type Syncer struct {
 	cfg         Config
 	pm          *internal.ProxyManager
 	httpClient  *http.Client
+	updater     *Updater
 	mu          sync.RWMutex
 	routePrefix string // learned from Master on first Sync()
 }
@@ -54,6 +55,7 @@ func NewSyncer(cfg Config, pm *internal.ProxyManager) *Syncer {
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
 		},
+		updater: NewUpdater(),
 	}
 }
 
@@ -195,7 +197,8 @@ func (s *Syncer) Sync() {
 
 // reportTraffic drains counters and POSTs them to Master.
 // Always sends a request even when there is no traffic so that Master can
-// update last_seen — this doubles as the heartbeat.
+// update last_seen — this doubles as the heartbeat. The response may carry a
+// one-shot self-update signal.
 func (s *Syncer) reportTraffic() {
 	deltas := s.pm.DrainTraffic()
 	type siteEntry struct {
@@ -212,8 +215,17 @@ func (s *Syncer) reportTraffic() {
 		"timestamp":  time.Now().Unix(),
 		"sites":      sites,
 	}
-	if err := s.post("/api/relay/traffic", body); err != nil {
+	data, err := s.postBytes("/api/relay/traffic", body)
+	if err != nil {
 		log.Printf("[relay] heartbeat/traffic report failed: %v", err)
+		return
+	}
+	var resp struct {
+		Update bool `json:"update"`
+	}
+	if err := json.Unmarshal(data, &resp); err == nil && resp.Update {
+		log.Printf("[relay] update requested by master; starting self-update")
+		s.updater.UpdateAsync()
 	}
 }
 
@@ -274,23 +286,29 @@ func (s *Syncer) get(path string) (*http.Response, error) {
 }
 
 func (s *Syncer) post(path string, body interface{}) error {
+	_, err := s.postBytes(path, body)
+	return err
+}
+
+// postBytes POSTs JSON and returns the response body for 2xx responses.
+func (s *Syncer) postBytes(path string, body interface{}) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("marshal body: %w", err)
+		return nil, fmt.Errorf("marshal body: %w", err)
 	}
 	req, err := http.NewRequest(http.MethodPost, s.url(path), bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.RelayToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("http: %w", err)
+		return nil, fmt.Errorf("http: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	return nil
+	return io.ReadAll(resp.Body)
 }

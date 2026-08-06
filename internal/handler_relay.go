@@ -6,10 +6,42 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// UpdateRequestStore records one-shot "please update" requests per node name.
+// The flag is consumed by the node's next traffic heartbeat; if the node is
+// offline the request survives until it reports again (or the Master restarts).
+type UpdateRequestStore struct {
+	mu    sync.Mutex
+	names map[string]bool
+}
+
+func (s *UpdateRequestStore) Request(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.names == nil {
+		s.names = make(map[string]bool)
+	}
+	s.names[name] = true
+}
+
+// Take consumes and returns whether an update was requested for the node.
+func (s *UpdateRequestStore) Take(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.names == nil {
+		return false
+	}
+	if s.names[name] {
+		delete(s.names, name)
+		return true
+	}
+	return false
+}
 
 // secureCompare does constant-time string comparison to resist timing attacks.
 func secureCompare(a, b string) bool {
@@ -110,6 +142,21 @@ type relayTrafficRequest struct {
 	Sites     []RelayTrafficSite `json:"sites"`
 }
 
+// handleRelayNodeUpdate records an update request for a node from the panel.
+// The node picks it up on its next traffic heartbeat.
+// POST /api/relay/nodes/update (panel JWT)
+func (a *App) handleRelayNodeUpdate(c *gin.Context) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	a.UpdateRequests.Request(req.Name)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // handleRelayTraffic receives per-site traffic increments from a relay node.
 // POST /api/relay/traffic
 func (a *App) handleRelayTraffic(c *gin.Context) {
@@ -139,7 +186,8 @@ func (a *App) handleRelayTraffic(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	// One-shot self-update signal: consumed by the node on this heartbeat.
+	c.JSON(http.StatusOK, gin.H{"ok": true, "update": a.UpdateRequests.Take(req.RelayName)})
 }
 
 // relayRegisterRequest is the body of POST /api/relay/nodes/register.

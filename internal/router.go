@@ -52,6 +52,7 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		// Relay node status (panel view)
 		auth.GET("/relay/nodes", app.handleRelayNodes)
 		auth.GET("/relay/install-cmd", app.handleRelayInstallCmd)
+		auth.POST("/relay/nodes/update", app.handleRelayNodeUpdate)
 
 		// Misc
 		auth.GET("/ua-profiles", app.handleUAProfiles)
