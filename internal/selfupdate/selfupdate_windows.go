@@ -2,13 +2,17 @@
 
 package selfupdate
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // Updater stub: Windows cannot exec-replace the running process, so
 // self-update is unsupported there (install via install.sh instead).
 type Updater struct {
 	Repo        string
 	AssetPrefix string
+	HTTPClient  *http.Client // unused; kept for API parity with the unix build
 }
 
 func New(assetPrefix string) *Updater {

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,9 +43,16 @@ func TestHandleUpdateStart(t *testing.T) {
 		t.Fatalf("no updater status = %d, want 503", w.Code)
 	}
 
-	// With an updater the update is accepted (executes in the background;
-	// the goroutine's GitHub access may fail here, which is only logged).
+	// With an updater the update is accepted. The background goroutine must
+	// never touch the network in tests: a successful download would swap the
+	// test binary for the real meridian binary and exec it (this actually
+	// happened in CI). Point its HTTP client at a transport that always fails.
 	app.Updater = selfupdate.New("meridian-")
+	app.Updater.HTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, errors.New("network disabled in tests")
+		}),
+	}
 	router = setupTestRouter(app) // rebuild: handlers capture app fields
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodPost, "/api/admin/update", nil), token))
