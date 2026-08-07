@@ -397,10 +397,10 @@ async function showAboutModal() {
     const latest = res.latest || '';
     let html = `版本 ${esc(current)}`;
     if (latest && latest !== current) {
-      html += `<div style="margin-top:2px">最新版本 <b style="color:var(--green)">${esc(latest)}</b></div>
-               <button class="btn-modal primary" id="about-update" style="margin-top:14px">立即更新到 ${esc(latest)}</button>`;
+      html += `<span style="margin-left:8px">最新 <b style="color:var(--green)">${esc(latest)}</b></span>
+               <button class="btn-modal primary" id="about-update" style="margin-left:10px;padding:5px 14px;font-size:.78rem;vertical-align:middle">立即更新</button>`;
     } else if (latest) {
-      html += `<div style="margin-top:2px">已是最新版本</div>`;
+      html += `<span style="margin-left:8px">已是最新版本</span>`;
     }
     verEl.innerHTML = html;
     const btn = document.getElementById('about-update');
