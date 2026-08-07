@@ -68,14 +68,6 @@ jobs:
             goarch: amd64
             suffix: windows-amd64.exe
 
-          - goos: darwin
-            goarch: amd64
-            suffix: darwin-amd64
-
-          - goos: darwin
-            goarch: arm64
-            suffix: darwin-arm64
-
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
