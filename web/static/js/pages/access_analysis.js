@@ -175,8 +175,9 @@ function drawTrendChart(trend, hours) {
     return;
   }
 
-  const maxReq = Math.max(1, ...trend.map(t => t.requests || 0));
-  const maxBytes = Math.max(1, ...trend.map(t => t.bytes_out || 0)) / (1024 * 1024);
+  // Leave 15% headroom above the peak so bars/lines do not touch the top edge.
+  const maxReq = Math.max(1, ...trend.map(t => t.requests || 0)) * 1.15;
+  const maxBytes = Math.max(1, ...trend.map(t => t.bytes_out || 0)) / (1024 * 1024) * 1.15;
   const n = trend.length;
 
   // Grid + left axis (requests)
