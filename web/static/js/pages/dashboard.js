@@ -37,77 +37,11 @@ function renderDashboard() {
         <div class="stat-title">运行时长</div>
       </div>
     </div>
-    <div class="glass-card fade-up stagger-4" id="update-card">
-      <div class="glass-card-header">
-        <div class="glass-card-title">版本更新</div>
-        <button class="btn-login" id="btn-check-update" style="width:auto;padding:6px 14px">检查更新</button>
-      </div>
-      <div id="update-info" style="color:var(--white-38);font-size:.85rem">正在检查...</div>
-    </div>
-    <div class="glass-card fade-up stagger-4">
-      <div class="glass-card-header">
-        <div class="glass-card-title"><span class="live-dot"></span>站点实时状态</div>
-        <div class="glass-card-title" style="font-size:.72rem;color:var(--white-38)" id="s-requests">0 请求</div>
-      </div>
-      <div style="overflow-x:auto">
-        <table>
-          <thead><tr>
-            <th>站点</th><th>状态</th><th>回源地址</th><th>UA 模式</th><th>访问路径</th><th>已用流量</th>
-          </tr></thead>
-          <tbody id="dash-table"></tbody>
-        </table>
-      </div>
-    </div>
   `;
 
   startDashSSE();
   loadDashboardTable();
-  document.getElementById('btn-check-update').onclick = loadUpdateStatus;
-  loadUpdateStatus();
 }
-
-// loadUpdateStatus queries the latest release and enables the update button.
-async function loadUpdateStatus() {
-  const info = document.getElementById('update-info');
-  const btn = document.getElementById('btn-check-update');
-  if (!info || !btn) return;
-  try {
-    const res = await API.updateCheck();
-    if (res.update_available) {
-      info.innerHTML = `当前 <b>${esc(res.current)}</b> → 最新 <b style="color:var(--green)">${esc(res.latest)}</b>，可更新`;
-      btn.textContent = '立即更新';
-      btn.onclick = confirmPanelUpdate;
-    } else {
-      info.innerHTML = `当前版本：<b>${esc(res.current)}</b>${res.latest ? '（已是最新）' : '（无法获取最新版本）'}`;
-      btn.textContent = '检查更新';
-      btn.onclick = loadUpdateStatus;
-    }
-  } catch (e) {
-    info.textContent = '检查更新失败：' + e.message;
-  }
-}
-
-// confirmPanelUpdate asks for confirmation before triggering the self-update.
-window.confirmPanelUpdate = function() {
-  document.getElementById('modal-title').textContent = '更新面板';
-  document.getElementById('modal-body').innerHTML = `
-    <p>将下载最新版本并自动重启面板，期间面板短暂不可用（数秒）。</p>
-    <p style="color:var(--white-38);font-size:.85rem;margin-top:8px">更新失败会自动回滚到旧版本。</p>`;
-  document.getElementById('modal-footer').innerHTML = `
-    <button class="btn-modal secondary" id="update-cancel">取消</button>
-    <button class="btn-modal primary" id="update-confirm">立即更新</button>`;
-  document.getElementById('update-cancel').addEventListener('click', closeModal);
-  document.getElementById('update-confirm').addEventListener('click', async () => {
-    try {
-      await API.updatePanel();
-      closeModal();
-      Toast.success('更新已开始，面板即将自动重启');
-    } catch (e) {
-      Toast.error('更新失败：' + e.message);
-    }
-  });
-  openModal({ closeOnBackdrop: true });
-};
 
 function startDashSSE() {
   stopDashSSE();
