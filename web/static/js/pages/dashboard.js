@@ -37,6 +37,20 @@ function renderDashboard() {
         <div class="stat-title">运行时长</div>
       </div>
     </div>
+    <div class="glass-card fade-up stagger-4">
+      <div class="glass-card-header">
+        <div class="glass-card-title"><span class="live-dot"></span>站点实时状态</div>
+        <div class="glass-card-title" style="font-size:.72rem;color:var(--white-38)" id="s-requests">0 请求</div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>站点</th><th>状态</th><th>回源地址</th><th>UA 模式</th><th>访问路径</th><th>已用流量</th>
+          </tr></thead>
+          <tbody id="dash-table"></tbody>
+        </table>
+      </div>
+    </div>
   `;
 
   startDashSSE();
