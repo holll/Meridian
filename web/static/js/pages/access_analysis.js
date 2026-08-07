@@ -167,7 +167,9 @@ function drawTrendChart(trend, hours) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, w, h);
 
-  const pad = { top: 24, right: 48, bottom: 32, left: 48 };
+  // right: 62 leaves room for 4-5 digit MB labels ("6042 MB") without
+  // clipping; 48 truncated the trailing "B" on wide values.
+  const pad = { top: 24, right: 62, bottom: 32, left: 48 };
   const cw = w - pad.left - pad.right;
   const ch = h - pad.top - pad.bottom;
 
