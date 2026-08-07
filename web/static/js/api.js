@@ -65,6 +65,10 @@ const API = {
   // UA Profiles
   getProfiles() { return this.request('GET', '/api/ua-profiles'); },
 
+  // Panel self-update
+  updateCheck() { return this.request('GET', '/api/admin/update/check'); },
+  updatePanel() { return this.request('POST', '/api/admin/update'); },
+
   logout() {
     this.token = null;
     this.username = null;

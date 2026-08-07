@@ -1,6 +1,6 @@
 //go:build unix
 
-package relay
+package selfupdate
 
 import (
 	"crypto/sha256"
@@ -18,19 +18,23 @@ import (
 	"time"
 )
 
-// Updater downloads and installs the latest relay release from GitHub, then
-// restarts the process in place via syscall.Exec.
+// Updater downloads and installs the latest release binary from GitHub, then
+// restarts the process in place via syscall.Exec. AssetPrefix selects the
+// release asset family (e.g. "meridian-" for the panel, "meridian-relay-").
 type Updater struct {
 	Repo        string // owner/repo of the release source
+	AssetPrefix string // release asset name prefix, e.g. "meridian-"
 	HTTPClient  *http.Client
 	GitHubAPI   string // override in tests; default https://api.github.com
 	DownloadURL string // override in tests; default https://github.com
 }
 
-func NewUpdater() *Updater {
+// New constructs an Updater for the given release asset prefix.
+func New(assetPrefix string) *Updater {
 	return &Updater{
-		Repo:       "holll/Meridian",
-		HTTPClient: &http.Client{Timeout: 10 * time.Minute},
+		Repo:        "holll/Meridian",
+		AssetPrefix: assetPrefix,
+		HTTPClient:  &http.Client{Timeout: 10 * time.Minute},
 	}
 }
 
@@ -46,11 +50,11 @@ func (u *Updater) UpdateAsync() {
 // Update downloads the latest release binary matching this platform, verifies
 // it against SHA256SUMS, atomically replaces the running binary and execs it.
 func (u *Updater) Update() error {
-	version, err := u.latestVersion()
+	version, err := u.LatestVersion()
 	if err != nil {
 		return err
 	}
-	asset := "meridian-relay-" + runtime.GOOS + "-" + runtime.GOARCH
+	asset := u.AssetPrefix + runtime.GOOS + "-" + runtime.GOARCH
 	base := u.downloadURL() + "/" + u.Repo + "/releases/download/" + version
 	exe, err := os.Executable()
 	if err != nil {
@@ -89,7 +93,7 @@ func (u *Updater) Update() error {
 }
 
 // latestVersion returns the tag_name of the newest GitHub release.
-func (u *Updater) latestVersion() (string, error) {
+func (u *Updater) LatestVersion() (string, error) {
 	req, err := http.NewRequest(http.MethodGet, u.apiURL()+"/repos/"+u.Repo+"/releases/latest", nil)
 	if err != nil {
 		return "", err

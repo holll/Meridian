@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"meridian/internal"
+	"meridian/internal/selfupdate"
 	"meridian/web"
 )
 
@@ -143,6 +144,8 @@ func main() {
 		RelayToken:     relayToken,
 		TrustedProxies: trustedProxies,
 		GeoLite:        geolite,
+		Version:        appVersion,
+		Updater:        selfupdate.New("meridian-"),
 	}
 
 	staticFS, err := fs.Sub(web.StaticFiles, "static")

@@ -50,6 +50,10 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		auth.POST("/relay/nodes/update", app.handleRelayNodeUpdate)
 		auth.DELETE("/relay/nodes/:name", app.handleRelayNodeDelete)
 
+		// Panel self-update
+		auth.GET("/admin/update/check", app.handleUpdateCheck)
+		auth.POST("/admin/update", app.handleUpdateStart)
+
 		// Misc
 		auth.GET("/ua-profiles", app.handleUAProfiles)
 		auth.GET("/events", app.handleSSE)

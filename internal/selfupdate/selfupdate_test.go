@@ -1,6 +1,6 @@
 //go:build unix
 
-package relay
+package selfupdate
 
 import (
 	"crypto/sha256"
@@ -32,7 +32,7 @@ func newTestUpdater(t *testing.T, tag string, payload []byte) (*Updater, *httpte
 		}
 	}))
 	t.Cleanup(srv.Close)
-	u := NewUpdater()
+	u := New("meridian-relay-")
 	u.HTTPClient = &http.Client{Transport: http.DefaultTransport}
 	u.GitHubAPI = srv.URL
 	u.DownloadURL = srv.URL
@@ -41,7 +41,7 @@ func newTestUpdater(t *testing.T, tag string, payload []byte) (*Updater, *httpte
 
 func TestUpdaterLatestVersion(t *testing.T) {
 	u, _ := newTestUpdater(t, "v9.9.9", []byte("payload"))
-	ver, err := u.latestVersion()
+	ver, err := u.LatestVersion()
 	if err != nil {
 		t.Fatalf("latestVersion: %v", err)
 	}

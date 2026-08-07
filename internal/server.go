@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"meridian/internal/selfupdate"
 )
 
 var startTime = time.Now()
@@ -23,8 +25,10 @@ type App struct {
 	loginLimiter    *loginRateLimiter
 	limiterOnce     sync.Once
 	TrustedProxies  []*net.IPNet
-	GeoLite         *GeoLite           // IP geolocation/ASN lookup; nil when unavailable
-	UpdateRequests  UpdateRequestStore // one-shot relay self-update requests
+	GeoLite         *GeoLite            // IP geolocation/ASN lookup; nil when unavailable
+	UpdateRequests  UpdateRequestStore  // one-shot relay self-update requests
+	Version         string              // panel version (set from main via ldflags)
+	Updater         *selfupdate.Updater // panel self-updater; nil disables
 }
 
 const (

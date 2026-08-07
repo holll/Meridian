@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"meridian/internal"
+	"meridian/internal/selfupdate"
 )
 
 const (
@@ -42,7 +43,7 @@ type Syncer struct {
 	cfg         Config
 	pm          *internal.ProxyManager
 	httpClient  *http.Client
-	updater     *Updater
+	updater     *selfupdate.Updater
 	mu          sync.RWMutex
 	routePrefix string    // learned from Master on first Sync()
 	lastSyncOK  time.Time // last successful sync/heartbeat; zero = never
@@ -56,7 +57,7 @@ func NewSyncer(cfg Config, pm *internal.ProxyManager) *Syncer {
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
 		},
-		updater: NewUpdater(),
+		updater: selfupdate.New("meridian-relay-"),
 	}
 }
 
