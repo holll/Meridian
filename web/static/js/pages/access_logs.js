@@ -76,7 +76,6 @@ function renderAccessLogs() {
   }
 
   loadAccessLogFilters();
-  loadAccessLogs();
   scheduleAccessLogRefresh();
 }
 
@@ -114,6 +113,9 @@ async function loadAccessLogFilters() {
     Toast.error('加载筛选选项失败');
   }
   applyLinkedLogFilter();
+  // First load must run after linked filters are applied so the request
+  // carries the status/site/node values from the analysis page.
+  loadAccessLogs();
 }
 
 // applyLinkedLogFilter fills the filter controls from a filter object linked
