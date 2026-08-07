@@ -354,22 +354,14 @@ window.confirmPanelUpdate = function() {
   openModal({ closeOnBackdrop: true });
 };
 
-// showAboutModal displays version info and GitHub repository status.
+// showAboutModal displays GitHub repository status first, then checks for
+// updates asynchronously (version area shows "检查更新中" meanwhile).
 async function showAboutModal() {
   document.getElementById('modal-title').textContent = '关于';
   document.getElementById('modal-body').innerHTML = '<div class="relay-loading">加载中...</div>';
   openModal({ closeOnBackdrop: true });
 
-  let current = '—';
-  let latest = '';
-  let updatable = false;
-  try {
-    const res = await API.updateCheck();
-    current = res.current || current;
-    latest = res.latest || '';
-    updatable = !!res.update_available;
-  } catch (e) { /* keep placeholders */ }
-
+  // 1. Repository metadata (fast, static).
   let repo = null;
   try {
     const info = await API.getRepoInfo();
@@ -387,25 +379,39 @@ async function showAboutModal() {
        <a href="${esc(repo.html_url)}" target="_blank" rel="noopener" class="about-link">${esc(repo.html_url)}</a>`
     : '<div style="color:var(--white-38);font-size:.82rem;margin-top:12px">无法获取仓库信息</div>';
 
-  const updateBtn = updatable
-    ? `<button class="btn-login" id="about-update" style="width:auto;margin-top:14px;padding:8px 20px">立即更新到 ${esc(latest)}</button>`
-    : '';
   document.getElementById('modal-body').innerHTML = `
     <div style="text-align:center;padding:8px 0 16px">
       <div style="font-size:1.05rem;font-weight:600">Meridian</div>
-      <div style="color:var(--white-38);font-size:.85rem;margin-top:4px">版本 ${esc(current)}</div>
-      <div style="color:var(--white-38);font-size:.85rem;margin-top:2px">${latest ? (latest !== current ? `最新版本 <b style="color:var(--green)">${esc(latest)}</b>` : '已是最新版本') : ''}</div>
+      <div id="about-version" style="color:var(--white-38);font-size:.85rem;margin-top:4px">检查更新中...</div>
       ${stats}
-      ${updateBtn}
     </div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn-modal secondary" id="about-close">关闭</button>`;
   document.getElementById('about-close').addEventListener('click', closeModal);
-  const aboutUpdateBtn = document.getElementById('about-update');
-  if (aboutUpdateBtn) {
-    aboutUpdateBtn.addEventListener('click', () => {
-      closeModal();
-      confirmPanelUpdate();
-    });
-  }
+
+  // 2. Update check, filled in asynchronously when it returns.
+  API.updateCheck().then(res => {
+    const verEl = document.getElementById('about-version');
+    if (!verEl) return; // dialog already closed
+    const current = res.current || '—';
+    const latest = res.latest || '';
+    let html = `版本 ${esc(current)}`;
+    if (latest && latest !== current) {
+      html += `<div style="margin-top:2px">最新版本 <b style="color:var(--green)">${esc(latest)}</b></div>
+               <button class="btn-login" id="about-update" style="width:auto;margin-top:14px;padding:8px 20px">立即更新到 ${esc(latest)}</button>`;
+    } else if (latest) {
+      html += `<div style="margin-top:2px">已是最新版本</div>`;
+    }
+    verEl.innerHTML = html;
+    const btn = document.getElementById('about-update');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        closeModal();
+        confirmPanelUpdate();
+      });
+    }
+  }).catch(() => {
+    const verEl = document.getElementById('about-version');
+    if (verEl) verEl.textContent = '检查更新失败';
+  });
 }
