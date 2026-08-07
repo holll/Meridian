@@ -154,7 +154,11 @@ function drawTrendChart(trend, hours) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const w = canvas.parentElement.clientWidth;
+  // clientWidth includes padding; measure the content box so the canvas
+  // does not overflow the padded .chart-wrap container.
+  const parentStyle = getComputedStyle(canvas.parentElement);
+  const w = canvas.parentElement.clientWidth
+    - parseFloat(parentStyle.paddingLeft) - parseFloat(parentStyle.paddingRight);
   const h = 280;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
