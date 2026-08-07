@@ -29,3 +29,8 @@ func (u *Updater) Update() error {
 func (u *Updater) LatestVersion() (string, error) {
 	return "", errors.New("self-update is not supported on Windows")
 }
+
+// RepoInfo reports GitHub repository metadata; unsupported on Windows.
+func (u *Updater) RepoInfo() (*RepoInfo, error) {
+	return nil, errors.New("self-update is not supported on Windows")
+}

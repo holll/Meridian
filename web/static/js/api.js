@@ -71,6 +71,7 @@ const API = {
 
   // Settings / account
   getAdminSettings() { return this.request('GET', '/api/admin/settings'); },
+  getRepoInfo() { return this.request('GET', '/api/admin/repo-info'); },
   changePassword(oldPassword, newPassword) {
     return this.request('POST', '/api/auth/change-password', { old_password: oldPassword, new_password: newPassword });
   },

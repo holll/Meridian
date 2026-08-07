@@ -332,7 +332,7 @@ async function showSettingsModal() {
   });
 }
 
-// showAboutModal displays version info and a link to the release page.
+// showAboutModal displays version info and GitHub repository status.
 async function showAboutModal() {
   document.getElementById('modal-title').textContent = '关于';
   document.getElementById('modal-body').innerHTML = '<div class="relay-loading">加载中...</div>';
@@ -346,12 +346,29 @@ async function showAboutModal() {
     latest = res.latest || '';
   } catch (e) { /* keep placeholders */ }
 
+  let repo = null;
+  try {
+    const info = await API.getRepoInfo();
+    if (info && !info.error) repo = info;
+  } catch (e) { /* degrade to version-only display */ }
+
+  const stats = repo
+    ? `<div class="about-stats">
+         <div class="about-stat"><b>${repo.stars || 0}</b><span>Star</span></div>
+         <div class="about-stat"><b>${repo.forks || 0}</b><span>Fork</span></div>
+         <div class="about-stat"><b>${repo.open_issues || 0}</b><span>Issues</span></div>
+         <div class="about-stat"><b>${esc(repo.license || '—')}</b><span>License</span></div>
+       </div>
+       ${repo.description ? `<div style="color:var(--white-60);font-size:.82rem;margin-top:12px;text-align:center">${esc(repo.description)}</div>` : ''}
+       <a href="${esc(repo.html_url)}" target="_blank" rel="noopener" class="about-link">${esc(repo.html_url)}</a>`
+    : '<div style="color:var(--white-38);font-size:.82rem;margin-top:12px">无法获取仓库信息</div>';
+
   document.getElementById('modal-body').innerHTML = `
     <div style="text-align:center;padding:8px 0 16px">
       <div style="font-size:1.05rem;font-weight:600">Meridian</div>
       <div style="color:var(--white-38);font-size:.85rem;margin-top:4px">版本 ${esc(current)}</div>
       <div style="color:var(--white-38);font-size:.85rem;margin-top:2px">${latest ? (latest !== current ? `最新版本 <b style="color:var(--green)">${esc(latest)}</b>` : '已是最新版本') : ''}</div>
-      <a href="https://github.com/holll/Meridian/releases" target="_blank" rel="noopener" style="display:inline-block;margin-top:14px;color:var(--blue);font-size:.85rem">查看发布页 →</a>
+      ${stats}
     </div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn-modal secondary" id="about-close">关闭</button>`;

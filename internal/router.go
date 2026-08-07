@@ -54,6 +54,7 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		auth.GET("/admin/update/check", app.handleUpdateCheck)
 		auth.POST("/admin/update", app.handleUpdateStart)
 		auth.GET("/admin/settings", app.handleAdminSettings)
+		auth.GET("/admin/repo-info", app.handleRepoInfo)
 
 		// Account
 		auth.POST("/auth/change-password", app.handleChangePassword)

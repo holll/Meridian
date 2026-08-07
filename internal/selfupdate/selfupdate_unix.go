@@ -92,6 +92,45 @@ func (u *Updater) Update() error {
 	return syscall.Exec(exe, os.Args, os.Environ())
 }
 
+// RepoInfo fetches repository metadata from the GitHub API.
+func (u *Updater) RepoInfo() (*RepoInfo, error) {
+	req, err := http.NewRequest(http.MethodGet, u.apiURL()+"/repos/"+u.Repo, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "meridian-selfupdate")
+	resp, err := u.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("repo info -> %d", resp.StatusCode)
+	}
+	var payload struct {
+		HTMLURL     string `json:"html_url"`
+		Description string `json:"description"`
+		Stars       int    `json:"stargazers_count"`
+		Forks       int    `json:"forks_count"`
+		OpenIssues  int    `json:"open_issues_count"`
+		License     struct {
+			SPDXID string `json:"spdx_id"`
+		} `json:"license"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return &RepoInfo{
+		HTMLURL:     payload.HTMLURL,
+		Description: payload.Description,
+		Stars:       payload.Stars,
+		Forks:       payload.Forks,
+		License:     payload.License.SPDXID,
+		OpenIssues:  payload.OpenIssues,
+	}, nil
+}
+
 // latestVersion returns the tag_name of the newest GitHub release.
 func (u *Updater) LatestVersion() (string, error) {
 	req, err := http.NewRequest(http.MethodGet, u.apiURL()+"/repos/"+u.Repo+"/releases/latest", nil)

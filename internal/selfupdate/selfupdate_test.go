@@ -21,6 +21,8 @@ func newTestUpdater(t *testing.T, tag string, payload []byte) (*Updater, *httpte
 	asset := "meridian-relay-" + runtime.GOOS + "-" + runtime.GOARCH
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/repos/holll/Meridian"):
+			w.Write([]byte(`{"html_url":"https://github.com/holll/Meridian","description":"test repo","stargazers_count":42,"forks_count":7,"open_issues_count":3,"license":{"spdx_id":"MIT"}}`))
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
 			fmt.Fprintf(w, `{"tag_name":%q}`, tag)
 		case strings.HasSuffix(r.URL.Path, "/"+asset):
@@ -47,6 +49,23 @@ func TestUpdaterLatestVersion(t *testing.T) {
 	}
 	if ver != "v9.9.9" {
 		t.Fatalf("version = %q, want v9.9.9", ver)
+	}
+}
+
+func TestUpdaterRepoInfo(t *testing.T) {
+	u, _ := newTestUpdater(t, "v9.9.9", []byte("payload"))
+	info, err := u.RepoInfo()
+	if err != nil {
+		t.Fatalf("RepoInfo: %v", err)
+	}
+	if info.HTMLURL != "https://github.com/holll/Meridian" {
+		t.Fatalf("html_url = %q", info.HTMLURL)
+	}
+	if info.Stars != 42 || info.Forks != 7 || info.OpenIssues != 3 {
+		t.Fatalf("stats = %+v, want 42/7/3", info)
+	}
+	if info.License != "MIT" {
+		t.Fatalf("license = %q, want MIT", info.License)
 	}
 }
 

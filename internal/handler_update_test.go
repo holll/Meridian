@@ -107,3 +107,26 @@ func TestHandleAdminSettings(t *testing.T) {
 		t.Fatal("geolite_enabled = true, want false (nil GeoLite)")
 	}
 }
+
+func TestHandleRepoInfo(t *testing.T) {
+	app := newTestApp(t)
+	router := setupTestRouter(app)
+	token := createTestAdmin(t, app)
+
+	// Without an updater the endpoint degrades with an error field.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodGet, "/api/admin/repo-info", nil), token))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if _, ok := decodeBody(t, w)["error"]; !ok {
+		t.Fatal("expected an error field without an updater")
+	}
+
+	// Unauthenticated.
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/admin/repo-info", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", w.Code)
+	}
+}

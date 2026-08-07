@@ -34,6 +34,22 @@ func (a *App) handleAdminSettings(c *gin.Context) {
 	})
 }
 
+// handleRepoInfo returns GitHub repository metadata for the About dialog.
+// GET /api/admin/repo-info (panel JWT). Returns 200 with an error field so
+// the dialog degrades gracefully when GitHub is unreachable.
+func (a *App) handleRepoInfo(c *gin.Context) {
+	if a.Updater == nil {
+		c.JSON(http.StatusOK, gin.H{"error": "repository info unavailable"})
+		return
+	}
+	info, err := a.Updater.RepoInfo()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"error": "无法获取仓库信息"})
+		return
+	}
+	c.JSON(http.StatusOK, info)
+}
+
 // handleUpdateStart triggers the panel self-update in the background; the
 // process execs itself with the new binary on success.
 // POST /api/admin/update (panel JWT)
