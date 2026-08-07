@@ -365,3 +365,53 @@ func TestCleanDatabaseInitializationAPIFlow(t *testing.T) {
 		t.Fatalf("authenticated sites status=%d body=%s", sites.Code, sites.Body.String())
 	}
 }
+
+func TestHandleChangePassword(t *testing.T) {
+	app := newTestApp(t)
+	router := setupTestRouter(app)
+	token := createTestAdmin(t, app) // also creates the admin user
+
+	change := func(oldPw, newPw string) *httptest.ResponseRecorder {
+		body := strings.NewReader(`{"old_password":"` + oldPw + `","new_password":"` + newPw + `"}`)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, authRequest(httptest.NewRequest(http.MethodPost, "/api/auth/change-password", body), token))
+		return w
+	}
+	login := func(pw string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+			strings.NewReader(`{"username":"admin","password":"`+pw+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// Unauthenticated request is rejected.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/auth/change-password",
+		strings.NewReader(`{"old_password":"x","new_password":"y"}`)))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", w.Code)
+	}
+
+	// Wrong current password.
+	if w := change("wrong-password", "newpass123"); w.Code != http.StatusBadRequest {
+		t.Fatalf("wrong old password status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+
+	// New password too short.
+	if w := change("correct horse battery staple", "short"); w.Code != http.StatusBadRequest {
+		t.Fatalf("short new password status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+
+	// Successful change: old password no longer works, new one does.
+	if w := change("correct horse battery staple", "brand-new-password"); w.Code != http.StatusOK {
+		t.Fatalf("change status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if code := login("correct horse battery staple"); code != http.StatusUnauthorized {
+		t.Fatalf("old password login status = %d, want 401", code)
+	}
+	if code := login("brand-new-password"); code != http.StatusOK {
+		t.Fatalf("new password login status = %d, want 200", code)
+	}
+}

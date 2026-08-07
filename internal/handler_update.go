@@ -22,6 +22,18 @@ func (a *App) handleUpdateCheck(c *gin.Context) {
 	})
 }
 
+// handleAdminSettings returns read-only panel information for the settings
+// dialog. GET /api/admin/settings (panel JWT)
+func (a *App) handleAdminSettings(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"version":           a.Version,
+		"panel_url":         requestPanelURL(c),
+		"route_prefix":      a.RoutePrefix,
+		"relay_api_enabled": a.RelayToken != "",
+		"geolite_enabled":   a.GeoLite != nil,
+	})
+}
+
 // handleUpdateStart triggers the panel self-update in the background; the
 // process execs itself with the new binary on success.
 // POST /api/admin/update (panel JWT)

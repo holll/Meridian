@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meridian — Emby 反代管理面板</title>
 <meta name="description" content="Meridian 轻量级 Emby 反向代理管理面板">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1.29.0">
-<link rel="stylesheet" href="/css/style.css?v=1.29.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1.30.0">
+<link rel="stylesheet" href="/css/style.css?v=1.30.0">
 </head>
 <body>
 
@@ -55,7 +55,15 @@
       <a href="#diagnostics" class="topnav-link" data-page="diagnostics">故障诊断</a>
     </div>
     <div class="topnav-right">
-      <button class="avatar-btn" id="avatar-btn">A</button>
+      <div class="avatar-menu-wrap">
+        <button class="avatar-btn" id="avatar-btn">A</button>
+        <div class="avatar-menu" id="avatar-menu" aria-hidden="true">
+          <button class="avatar-menu-item" id="menu-settings">设置</button>
+          <button class="avatar-menu-item" id="menu-about">关于</button>
+          <div class="avatar-menu-sep"></div>
+          <button class="avatar-menu-item danger" id="menu-logout">退出登录</button>
+        </div>
+      </div>
     </div>
   </nav>
 
@@ -126,15 +134,15 @@
 
 </div>
 
-<script src="/js/api.js?v=1.29.0"></script>
-<script src="/js/toast.js?v=1.29.0"></script>
-<script src="/js/router.js?v=1.29.0"></script>
-<script src="/js/pages/dashboard.js?v=1.29.0"></script>
-<script src="/js/pages/sites.js?v=1.29.0"></script>
-<script src="/js/pages/access_logs.js?v=1.29.0"></script>
-<script src="/js/pages/access_analysis.js?v=1.29.0"></script>
-<script src="/js/pages/relay.js?v=1.29.0"></script>
-<script src="/js/pages/diag.js?v=1.29.0"></script>
-<script src="/js/app.js?v=1.29.0"></script>
+<script src="/js/api.js?v=1.30.0"></script>
+<script src="/js/toast.js?v=1.30.0"></script>
+<script src="/js/router.js?v=1.30.0"></script>
+<script src="/js/pages/dashboard.js?v=1.30.0"></script>
+<script src="/js/pages/sites.js?v=1.30.0"></script>
+<script src="/js/pages/access_logs.js?v=1.30.0"></script>
+<script src="/js/pages/access_analysis.js?v=1.30.0"></script>
+<script src="/js/pages/relay.js?v=1.30.0"></script>
+<script src="/js/pages/diag.js?v=1.30.0"></script>
+<script src="/js/app.js?v=1.30.0"></script>
 </body>
 </html>

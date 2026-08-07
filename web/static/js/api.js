@@ -69,6 +69,12 @@ const API = {
   updateCheck() { return this.request('GET', '/api/admin/update/check'); },
   updatePanel() { return this.request('POST', '/api/admin/update'); },
 
+  // Settings / account
+  getAdminSettings() { return this.request('GET', '/api/admin/settings'); },
+  changePassword(oldPassword, newPassword) {
+    return this.request('POST', '/api/auth/change-password', { old_password: oldPassword, new_password: newPassword });
+  },
+
   logout() {
     this.token = null;
     this.username = null;

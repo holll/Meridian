@@ -245,8 +245,115 @@
     Toast.info('已退出登录');
   }
 
-  document.getElementById('avatar-btn').addEventListener('click', logout);
+  // Avatar dropdown menu (settings / about / logout)
+  const avatarBtn = document.getElementById('avatar-btn');
+  const avatarMenu = document.getElementById('avatar-menu');
+  function toggleAvatarMenu(open) {
+    avatarMenu.classList.toggle('open', open);
+    avatarMenu.setAttribute('aria-hidden', open ? 'false' : 'true');
+  }
+  avatarBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    toggleAvatarMenu(!avatarMenu.classList.contains('open'));
+  });
+  document.addEventListener('click', function() { toggleAvatarMenu(false); });
+  avatarMenu.addEventListener('click', function(e) { e.stopPropagation(); });
+  document.getElementById('menu-settings').addEventListener('click', function() {
+    toggleAvatarMenu(false);
+    showSettingsModal();
+  });
+  document.getElementById('menu-about').addEventListener('click', function() {
+    toggleAvatarMenu(false);
+    showAboutModal();
+  });
+  document.getElementById('menu-logout').addEventListener('click', function() {
+    toggleAvatarMenu(false);
+    logout();
+  });
   document.getElementById('btn-sidebar-logout').addEventListener('click', logout);
 
   checkAuth();
 })();
+
+// showSettingsModal displays panel information and a password change form.
+async function showSettingsModal() {
+  document.getElementById('modal-title').textContent = '设置';
+  document.getElementById('modal-body').innerHTML = '<div class="relay-loading">加载中...</div>';
+  openModal({ closeOnBackdrop: true });
+
+  let info;
+  try {
+    info = await API.getAdminSettings();
+  } catch (e) {
+    document.getElementById('modal-body').innerHTML = '<p style="color:var(--red)">加载设置失败：' + esc(e.message) + '</p>';
+    return;
+  }
+
+  document.getElementById('modal-body').innerHTML = `
+    <div style="font-size:.85rem;margin-bottom:18px">
+      <div class="settings-row"><span>面板版本</span><b>${esc(info.version || '—')}</b></div>
+      <div class="settings-row"><span>面板地址</span><span class="mono">${esc(info.panel_url || '—')}</span></div>
+      <div class="settings-row"><span>路由前缀</span><span class="mono">${esc(info.route_prefix || '—')}</span></div>
+      <div class="settings-row"><span>Relay API</span><span>${info.relay_api_enabled ? '已启用' : '未启用'}</span></div>
+      <div class="settings-row"><span>GeoLite</span><span>${info.geolite_enabled ? '已启用' : '未启用'}</span></div>
+    </div>
+    <div class="avatar-menu-sep" style="margin:10px 0"></div>
+    <div class="form-group">
+      <label>当前密码</label>
+      <input type="password" class="form-input" id="pw-old" autocomplete="current-password">
+    </div>
+    <div class="form-group">
+      <label>新密码（8–72 位）</label>
+      <input type="password" class="form-input" id="pw-new" autocomplete="new-password">
+    </div>
+    <div class="form-group">
+      <label>确认新密码</label>
+      <input type="password" class="form-input" id="pw-confirm" autocomplete="new-password">
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn-modal secondary" id="pw-cancel">取消</button>
+    <button class="btn-modal primary" id="pw-submit">修改密码</button>`;
+  document.getElementById('pw-cancel').addEventListener('click', closeModal);
+  document.getElementById('pw-submit').addEventListener('click', async () => {
+    const oldPw = document.getElementById('pw-old').value;
+    const newPw = document.getElementById('pw-new').value;
+    const confirmPw = document.getElementById('pw-confirm').value;
+    if (!oldPw || !newPw) { Toast.error('请填写完整密码'); return; }
+    if (newPw !== confirmPw) { Toast.error('两次输入的新密码不一致'); return; }
+    try {
+      await API.changePassword(oldPw, newPw);
+      closeModal();
+      Toast.success('密码已修改，请重新登录');
+      API.logout();
+      window.location.reload();
+    } catch (e) {
+      Toast.error(e.message);
+    }
+  });
+}
+
+// showAboutModal displays version info and a link to the release page.
+async function showAboutModal() {
+  document.getElementById('modal-title').textContent = '关于';
+  document.getElementById('modal-body').innerHTML = '<div class="relay-loading">加载中...</div>';
+  openModal({ closeOnBackdrop: true });
+
+  let current = '—';
+  let latest = '';
+  try {
+    const res = await API.updateCheck();
+    current = res.current || current;
+    latest = res.latest || '';
+  } catch (e) { /* keep placeholders */ }
+
+  document.getElementById('modal-body').innerHTML = `
+    <div style="text-align:center;padding:8px 0 16px">
+      <div style="font-size:1.05rem;font-weight:600">Meridian</div>
+      <div style="color:var(--white-38);font-size:.85rem;margin-top:4px">版本 ${esc(current)}</div>
+      <div style="color:var(--white-38);font-size:.85rem;margin-top:2px">${latest ? (latest !== current ? `最新版本 <b style="color:var(--green)">${esc(latest)}</b>` : '已是最新版本') : ''}</div>
+      <a href="https://github.com/holll/Meridian/releases" target="_blank" rel="noopener" style="display:inline-block;margin-top:14px;color:var(--blue);font-size:.85rem">查看发布页 →</a>
+    </div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn-modal secondary" id="about-close">关闭</button>`;
+  document.getElementById('about-close').addEventListener('click', closeModal);
+}

@@ -100,6 +100,28 @@ func (a *App) handleLogin(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"token": token, "username": username})
 }
 
+// handleChangePassword updates the administrator password after verifying
+// the current one. POST /api/auth/change-password (panel JWT)
+func (a *App) handleChangePassword(c *gin.Context) {
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if _, err := a.DB.VerifyUser("admin", req.OldPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "当前密码错误"})
+		return
+	}
+	if err := a.DB.ResetAdminPassword(req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // GET /api/auth/check
 func (a *App) handleAuthCheck(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")

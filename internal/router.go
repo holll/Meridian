@@ -53,6 +53,10 @@ func SetupRouter(app *App, pm *ProxyManager, staticFS fs.FS, accessLog io.Writer
 		// Panel self-update
 		auth.GET("/admin/update/check", app.handleUpdateCheck)
 		auth.POST("/admin/update", app.handleUpdateStart)
+		auth.GET("/admin/settings", app.handleAdminSettings)
+
+		// Account
+		auth.POST("/auth/change-password", app.handleChangePassword)
 
 		// Misc
 		auth.GET("/ua-profiles", app.handleUAProfiles)
